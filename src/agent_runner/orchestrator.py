@@ -1,9 +1,15 @@
 """Researcher and supervisor agent orchestration loop."""
 
 from pathlib import Path
+import os
+import queue
+import shlex
+import signal
 import subprocess
 import sys
-from typing import Optional, Sequence
+import threading
+import time
+from typing import Optional, Sequence, TextIO
 
 from . import __version__
 from .config import AgentCommands
@@ -18,6 +24,37 @@ FEEDBACK = ROOT / "feedback.md"
 MAX_ITERATIONS = 100
 
 COMMANDS: Optional[AgentCommands] = None
+AGENT_TIMEOUT_SECONDS: Optional[float] = None
+HEARTBEAT_SECONDS = 30.0
+
+
+def _elapsed(seconds: float) -> str:
+    minutes, remainder = divmod(int(seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h {minutes}m {remainder}s"
+    if minutes:
+        return f"{minutes}m {remainder}s"
+    return f"{remainder}s"
+
+
+def _stop_process(process: subprocess.Popen[str]) -> None:
+    """Stop the agent and any subprocesses it started."""
+    if process.poll() is not None:
+        return
+
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+    except (AttributeError, ProcessLookupError, PermissionError):
+        process.terminate()
+
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (AttributeError, ProcessLookupError, PermissionError):
+            process.kill()
 
 
 def select_pdf(project_root: Path) -> Path:
@@ -29,22 +66,143 @@ def pdf_project_path() -> str:
     return PAPER.relative_to(ROOT).as_posix()
 
 
-def run(cmd: Sequence[str], cwd: Optional[Path] = None) -> str:
-    result = subprocess.run(
+def run(
+    cmd: Sequence[str],
+    cwd: Optional[Path] = None,
+    *,
+    label: str = "agent",
+) -> str:
+    """Run an agent while teeing its output to the terminal and a log file."""
+    working_directory = cwd or ROOT
+    log_directory = ROOT / ".agent-run"
+    log_directory.mkdir(exist_ok=True)
+    log_path = log_directory / "agent-run.log"
+    started = time.monotonic()
+    display_command = shlex.join(cmd[:-1]) + " <prompt>"
+
+    process = subprocess.Popen(
         cmd,
-        cwd=cwd or ROOT,
+        cwd=working_directory,
         text=True,
-        capture_output=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=1,
+        errors="replace",
+        start_new_session=True,
     )
 
-    if result.returncode != 0:
-        print(result.stdout)
-        print(result.stderr, file=sys.stderr)
-        raise RuntimeError(
-            f"Command failed with exit code {result.returncode}: {cmd}"
+    print(
+        f"[{label}] started PID {process.pid}; live output follows. "
+        f"Log: {log_path}"
+    )
+
+    output: queue.Queue[tuple[str, Optional[str]]] = queue.Queue()
+
+    def read_stream(name: str, stream: TextIO) -> None:
+        try:
+            for line in stream:
+                output.put((name, line))
+        finally:
+            output.put((name, None))
+
+    assert process.stdout is not None
+    assert process.stderr is not None
+    readers = [
+        threading.Thread(
+            target=read_stream,
+            args=("stdout", process.stdout),
+            daemon=True,
+        ),
+        threading.Thread(
+            target=read_stream,
+            args=("stderr", process.stderr),
+            daemon=True,
+        ),
+    ]
+    for reader in readers:
+        reader.start()
+
+    stdout: list[str] = []
+    completed_streams = 0
+    next_heartbeat = started + HEARTBEAT_SECONDS
+    timed_out = False
+
+    with log_path.open("a", encoding="utf-8", buffering=1) as log:
+        timestamp = time.strftime("%Y-%m-%d %H:%M:%S %z")
+        log.write(
+            f"\n=== {timestamp} | {label} | PID {process.pid} ===\n"
+            f"cwd: {working_directory}\ncommand: {display_command}\n"
         )
 
-    return result.stdout
+        try:
+            while completed_streams < len(readers):
+                now = time.monotonic()
+                if (
+                    AGENT_TIMEOUT_SECONDS is not None
+                    and now - started >= AGENT_TIMEOUT_SECONDS
+                    and not timed_out
+                    and process.poll() is None
+                ):
+                    timed_out = True
+                    message = (
+                        f"[{label}] timed out after "
+                        f"{_elapsed(now - started)}; stopping PID {process.pid}."
+                    )
+                    print(message, file=sys.stderr, flush=True)
+                    log.write(message + "\n")
+                    _stop_process(process)
+
+                if (
+                    now >= next_heartbeat
+                    and not timed_out
+                    and process.poll() is None
+                ):
+                    message = (
+                        f"[{label}] still running (PID {process.pid}, "
+                        f"elapsed {_elapsed(now - started)})."
+                    )
+                    print(message, file=sys.stderr, flush=True)
+                    log.write(message + "\n")
+                    next_heartbeat = now + HEARTBEAT_SECONDS
+
+                try:
+                    stream_name, line = output.get(timeout=0.25)
+                except queue.Empty:
+                    continue
+
+                if line is None:
+                    completed_streams += 1
+                    continue
+
+                destination = sys.stdout if stream_name == "stdout" else sys.stderr
+                print(line, end="", file=destination, flush=True)
+                log.write(f"[{stream_name}] {line}")
+                if stream_name == "stdout":
+                    stdout.append(line)
+        except KeyboardInterrupt:
+            message = f"[{label}] interrupted; stopping PID {process.pid}."
+            print(message, file=sys.stderr, flush=True)
+            log.write(message + "\n")
+            _stop_process(process)
+            raise
+
+        returncode = process.wait()
+        elapsed = _elapsed(time.monotonic() - started)
+        log.write(f"=== exit {returncode} | elapsed {elapsed} ===\n")
+
+    if timed_out:
+        raise RuntimeError(
+            f"{label} exceeded the {AGENT_TIMEOUT_SECONDS:g}s timeout. "
+            f"See {log_path}."
+        )
+
+    if returncode != 0:
+        raise RuntimeError(
+            f"{label} failed with exit code {returncode}. See {log_path}."
+        )
+
+    print(f"[{label}] finished successfully in {elapsed}.")
+    return "".join(stdout)
 
 
 def validate_pdf() -> None:
@@ -119,7 +277,10 @@ Finish only when {pdf_path} represents your completed work for this iteration.
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
 
-    return run([*COMMANDS.researcher, prompt])
+    return run(
+        [*COMMANDS.researcher, prompt],
+        label=f"researcher iteration {iteration}",
+    )
 
 
 def run_supervisor(iteration: int) -> str:
@@ -181,16 +342,28 @@ prevent the paper from being submission-ready.
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
 
-    return run([*COMMANDS.supervisor, prompt])
+    return run(
+        [*COMMANDS.supervisor, prompt],
+        label=f"supervisor iteration {iteration}",
+    )
 
 
-def main(project_root: Path, commands: AgentCommands) -> None:
+def main(
+    project_root: Path,
+    commands: AgentCommands,
+    *,
+    timeout_seconds: Optional[float] = None,
+    heartbeat_seconds: float = 30.0,
+) -> None:
     global ROOT, PAPER, FEEDBACK, COMMANDS
+    global AGENT_TIMEOUT_SECONDS, HEARTBEAT_SECONDS
 
     ROOT = Path(project_root).resolve()
     PAPER = select_pdf(ROOT)
     FEEDBACK = ROOT / "feedback.md"
     COMMANDS = commands
+    AGENT_TIMEOUT_SECONDS = timeout_seconds
+    HEARTBEAT_SECONDS = heartbeat_seconds
 
     for iteration in range(1, MAX_ITERATIONS + 1):
         print(f"\n=== ITERATION {iteration} ===")

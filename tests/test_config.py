@@ -1,4 +1,6 @@
 import json
+import io
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -15,6 +17,44 @@ from agent_runner import orchestrator
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_run_streams_and_logs_agent_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            command = [
+                sys.executable,
+                "-c",
+                "import sys; print('visible out'); print('visible err', file=sys.stderr)",
+                "test prompt",
+            ]
+            with patch.object(orchestrator, "ROOT", root), \
+                    patch.object(orchestrator, "AGENT_TIMEOUT_SECONDS", None), \
+                    patch.object(orchestrator, "HEARTBEAT_SECONDS", 30), \
+                    patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                result = orchestrator.run(command, label="test agent")
+
+            self.assertEqual(result, "visible out\n")
+            self.assertIn("visible out", stdout.getvalue())
+            self.assertIn("visible err", stderr.getvalue())
+            log = (root / ".agent-run" / "agent-run.log").read_text()
+            self.assertIn("test agent", log)
+            self.assertIn("[stdout] visible out", log)
+            self.assertIn("[stderr] visible err", log)
+            self.assertNotIn("test prompt", log)
+
+    def test_run_timeout_stops_agent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            command = [sys.executable, "-c", "import time; time.sleep(10)", "prompt"]
+            with patch.object(orchestrator, "ROOT", root), \
+                    patch.object(orchestrator, "AGENT_TIMEOUT_SECONDS", 0.1), \
+                    patch.object(orchestrator, "HEARTBEAT_SECONDS", 30), \
+                    patch("sys.stdout", io.StringIO()), \
+                    patch("sys.stderr", io.StringIO()):
+                with self.assertRaisesRegex(RuntimeError, "exceeded"):
+                    orchestrator.run(command, label="slow agent")
+
     def test_example_is_valid_configuration(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)

@@ -1,6 +1,7 @@
 """Command-line launcher for running the orchestrator in a project folder."""
 
 import argparse
+import math
 from pathlib import Path
 import subprocess
 import sys
@@ -17,6 +18,18 @@ from .documents import find_existing_pdf
 
 
 BRANCH_NAME = "agent"
+
+
+def positive_number(value: str) -> float:
+    try:
+        number = float(value)
+    except ValueError as error:
+        raise argparse.ArgumentTypeError("must be a number") from error
+    if not math.isfinite(number) or number <= 0:
+        raise argparse.ArgumentTypeError("must be a finite number greater than zero")
+    return number
+
+
 def git(*args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args],
@@ -62,6 +75,19 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the agent orchestrator for a marked project folder.",
     )
     parser.add_argument("folder", type=Path)
+    parser.add_argument(
+        "--timeout",
+        type=positive_number,
+        metavar="SECONDS",
+        help="stop an individual researcher or supervisor after this long",
+    )
+    parser.add_argument(
+        "--heartbeat",
+        type=positive_number,
+        default=30.0,
+        metavar="SECONDS",
+        help="interval for running-agent status messages (default: 30)",
+    )
     parser.add_argument(
         "--version",
         action="version",
@@ -110,7 +136,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"Using agent configuration from {config_path}.")
         commands = load_agent_commands(folder)
         switch_to_agent_branch(folder)
-        orchestrator.main(folder, commands)
+        orchestrator.main(
+            folder,
+            commands,
+            timeout_seconds=args.timeout,
+            heartbeat_seconds=args.heartbeat,
+        )
     except ConfigurationError as error:
         print(setup_message(folder, error), file=sys.stderr)
         return 2
@@ -122,5 +153,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if error.stderr:
             print(error.stderr, end="", file=sys.stderr)
         return error.returncode
+    except RuntimeError as error:
+        print(f"agent-run: {error}", file=sys.stderr)
+        return 1
 
     return 0

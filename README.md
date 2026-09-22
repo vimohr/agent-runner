@@ -80,6 +80,22 @@ Then run:
 agent-run path/to/project
 ```
 
+Agent output is shown live instead of being held until the command finishes.
+While an agent is running, `agent-run` prints a heartbeat every 30 seconds with
+its role, PID, and elapsed time. The complete output is also appended to
+`.agent-run/agent-run.log` in the project, so a failed or interrupted run can
+be inspected afterward.
+
+To change the heartbeat interval or put a time limit on each individual agent:
+
+```sh
+agent-run --heartbeat 10 --timeout 3600 path/to/project
+```
+
+There is no timeout by default because a legitimate research or compilation
+step may take a long time. Pressing Ctrl-C stops the current agent and its
+child processes cleanly; the log remains available for diagnosis.
+
 `agent-run` exits without changing anything unless the directory contains
 `paper.pdf` or `main.pdf` anywhere below it, or a top-level `TASK.md`. When
 both PDF names exist, `paper.pdf` takes precedence regardless of depth;

@@ -46,14 +46,16 @@ python3 -m pip install -e .
 ## Usage
 
 On the first run for a marked project, `agent-run` creates an `agent-run.json`
-file containing the standard researcher and supervisor commands. It prints
-the file location and asks whether to continue with the standard settings.
+file containing the standard researcher and supervisor commands and prompts.
+It prints the file location and asks whether to continue with the standard
+settings.
 Answer `yes` to run immediately, or `no` (the default) to stop before any Git
 or agent commands run so you can edit the file. Later runs preserve and reuse
 your configuration without asking again.
 
-The configured command is run directly, and the orchestrator's fixed prompt
-is appended as its final argument.
+The configured command is run directly, and its configured prompt is appended
+as the final argument. Prompts can be a string or an array of lines. Arrays
+make longer prompts easier to edit in JSON.
 
 For example:
 
@@ -66,13 +68,34 @@ For example:
     "codex", "exec", "--model", "gpt-6-astra",
     "--config", "model_reasoning_effort=\"max\"",
     "--sandbox", "workspace-write"
+  ],
+  "researcher_prompt": [
+    "You are the RESEARCHER / AUTHOR.",
+    "This is iteration {{iteration}}.",
+    "Write the completed paper to {{pdf_path}}.",
+    "{{task_instruction}}",
+    "{{feedback_instruction}}"
+  ],
+  "supervisor_prompt": [
+    "You are the SUPERVISOR / REVIEWER.",
+    "This is review iteration {{iteration}}.",
+    "Critically review {{pdf_path}} and write feedback.md."
   ]
 }
 ```
 
-Each value may alternatively be a shell-style command string, but argument
-arrays are recommended because their quoting is unambiguous. Shell features
-such as pipes and redirection are not interpreted.
+The complete generated file contains the standard prompts. The following
+placeholders are replaced just before each agent starts:
+
+- Both prompts: `{{iteration}}`, `{{pdf_path}}`
+- Researcher only: `{{task_instruction}}`, `{{feedback_instruction}}`
+
+Prompt fields are optional for compatibility with existing configurations;
+when omitted, the standard prompt is used.
+
+Each command may alternatively be a shell-style string, but argument arrays
+are recommended because their quoting is unambiguous. Shell features such as
+pipes and redirection are not interpreted.
 
 Then run:
 

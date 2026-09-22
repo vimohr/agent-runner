@@ -62,6 +62,8 @@ class ConfigurationTests(unittest.TestCase):
             commands = load_agent_commands(folder)
             self.assertEqual(commands.researcher[0], "claude")
             self.assertEqual(commands.supervisor[:2], ("codex", "exec"))
+            self.assertIn("{{iteration}}", commands.researcher_prompt)
+            self.assertIn("{{pdf_path}}", commands.supervisor_prompt)
 
     def test_default_configuration_can_be_materialized(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -77,6 +79,7 @@ class ConfigurationTests(unittest.TestCase):
     def test_string_commands_are_supported(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
+            (folder / "TASK.md").write_text("Write a paper")
             (folder / "agent-run.json").write_text(json.dumps({
                 "researcher": "author --model 'model with spaces'",
                 "supervisor": "reviewer --strict",
@@ -86,6 +89,40 @@ class ConfigurationTests(unittest.TestCase):
                 commands.researcher,
                 ("author", "--model", "model with spaces"),
             )
+            self.assertIn("RESEARCHER / AUTHOR", commands.researcher_prompt)
+
+    def test_custom_prompts_are_loaded_and_rendered(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "TASK.md").write_text("Write a paper")
+            (folder / "agent-run.json").write_text(json.dumps({
+                "researcher": ["author"],
+                "supervisor": ["reviewer"],
+                "researcher_prompt": [
+                    "Research pass {{iteration}}",
+                    "Write {{pdf_path}}. {{task_instruction}}",
+                ],
+                "supervisor_prompt": "Review {{pdf_path}} on pass {{iteration}}",
+            }))
+            commands = load_agent_commands(folder)
+            root = folder
+            with patch.object(orchestrator, "COMMANDS", commands), \
+                    patch.object(orchestrator, "ROOT", root), \
+                    patch.object(orchestrator, "PAPER", root / "paper.pdf"), \
+                    patch.object(orchestrator, "FEEDBACK", root / "feedback.md"), \
+                    patch.object(orchestrator, "run", return_value="") as run:
+                orchestrator.run_researcher(4)
+                researcher_prompt = run.call_args.args[0][-1]
+                self.assertIn("Research pass 4", researcher_prompt)
+                self.assertIn("Write paper.pdf", researcher_prompt)
+                self.assertIn("Read TASK.md", researcher_prompt)
+
+                orchestrator.run_supervisor(5)
+                supervisor_prompt = run.call_args.args[0][-1]
+                self.assertEqual(
+                    supervisor_prompt,
+                    "Review paper.pdf on pass 5\n",
+                )
 
     def test_invalid_command_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:

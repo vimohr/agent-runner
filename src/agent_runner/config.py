@@ -5,7 +5,7 @@ from importlib import resources
 import json
 from pathlib import Path
 import shlex
-from typing import Mapping, Sequence
+from typing import Mapping, Optional, Sequence
 
 
 CONFIG_FILENAME = "agent-run.json"
@@ -28,6 +28,8 @@ class ConfigurationError(ValueError):
 class AgentCommands:
     researcher: tuple[str, ...]
     supervisor: tuple[str, ...]
+    researcher_prompt: Optional[str] = None
+    supervisor_prompt: Optional[str] = None
 
 
 def _parse_command(name: str, value: object) -> tuple[str, ...]:
@@ -54,6 +56,31 @@ def _parse_command(name: str, value: object) -> tuple[str, ...]:
         )
 
     return tuple(command)
+
+
+def _parse_prompt(name: str, value: object) -> str:
+    if isinstance(value, str):
+        prompt = value
+    elif isinstance(value, list) and all(
+        isinstance(line, str) for line in value
+    ):
+        prompt = "\n".join(value)
+    else:
+        raise ConfigurationError(
+            f"{name!r} must be a string or an array of strings"
+        )
+
+    if not prompt.strip():
+        raise ConfigurationError(f"{name!r} must not be empty")
+    return prompt
+
+
+def _default_prompts() -> tuple[str, str]:
+    contents = json.loads(default_config_text())
+    return (
+        _parse_prompt("researcher_prompt", contents["researcher_prompt"]),
+        _parse_prompt("supervisor_prompt", contents["supervisor_prompt"]),
+    )
 
 
 def load_agent_commands(folder: Path) -> AgentCommands:
@@ -83,9 +110,33 @@ def load_agent_commands(folder: Path) -> AgentCommands:
             f"{CONFIG_FILENAME} is missing: {', '.join(missing)}"
         )
 
+    default_researcher_prompt, default_supervisor_prompt = _default_prompts()
     return AgentCommands(
         researcher=_parse_command("researcher", contents["researcher"]),
         supervisor=_parse_command("supervisor", contents["supervisor"]),
+        researcher_prompt=_parse_prompt(
+            "researcher_prompt",
+            contents.get("researcher_prompt", default_researcher_prompt),
+        ),
+        supervisor_prompt=_parse_prompt(
+            "supervisor_prompt",
+            contents.get("supervisor_prompt", default_supervisor_prompt),
+        ),
+    )
+
+
+def prompts_for(commands: AgentCommands) -> tuple[str, str]:
+    """Return configured prompts, falling back for programmatic callers."""
+    if (
+        commands.researcher_prompt is not None
+        and commands.supervisor_prompt is not None
+    ):
+        return commands.researcher_prompt, commands.supervisor_prompt
+
+    default_researcher, default_supervisor = _default_prompts()
+    return (
+        commands.researcher_prompt or default_researcher,
+        commands.supervisor_prompt or default_supervisor,
     )
 
 

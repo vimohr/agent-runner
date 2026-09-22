@@ -12,7 +12,7 @@ import time
 from typing import Optional, Sequence, TextIO
 
 from . import __version__
-from .config import AgentCommands
+from .config import AgentCommands, prompts_for
 from .documents import find_existing_pdf
 
 
@@ -225,57 +225,40 @@ def validate_feedback() -> str:
     return text
 
 
+def render_prompt(template: str, **values: object) -> str:
+    """Replace the documented, deliberately explicit prompt placeholders."""
+    prompt = template
+    for name, value in values.items():
+        prompt = prompt.replace(f"{{{{{name}}}}}", str(value))
+    return prompt.strip() + "\n"
+
+
 def run_researcher(iteration: int) -> str:
     feedback_instruction = ""
     task_instruction = ""
 
     if (ROOT / "TASK.md").exists():
-        task_instruction = """
-Read TASK.md and use it as the project brief.
-"""
+        task_instruction = "Read TASK.md and use it as the project brief."
 
     if FEEDBACK.exists():
-        feedback_instruction = """
-Read feedback.md carefully.
+        feedback_instruction = """Read feedback.md carefully.
 
 Address every CRITICAL and MAJOR issue.
-Address MINOR issues when appropriate.
-"""
+Address MINOR issues when appropriate."""
 
     pdf_path = pdf_project_path()
 
-    prompt = f"""
-You are the RESEARCHER / AUTHOR.
-
-This is iteration {iteration}.
-
-Work inside the current project directory.
-
-Your responsibility is to research, write, and revise the academic paper.
-
-{task_instruction}
-
-{feedback_instruction}
-
-Do a thorough literature analysis for context when appropriate.
-
-Requirements:
-
-1. Maintain the editable source of the paper.
-2. Incorporate supervisor feedback where supplied and when you consider it appropriate.
-3. Compile/export the completed paper to:
-
-   {pdf_path}
-
-4. Verify that {pdf_path} was successfully generated.
-5. Do NOT create or modify feedback.md.
-6. Do NOT decide whether the project is finished.
-
-Finish only when {pdf_path} represents your completed work for this iteration.
-"""
-
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
+
+    researcher_prompt, _ = prompts_for(COMMANDS)
+    prompt = render_prompt(
+        researcher_prompt,
+        iteration=iteration,
+        pdf_path=pdf_path,
+        task_instruction=task_instruction,
+        feedback_instruction=feedback_instruction,
+    )
 
     return run(
         [*COMMANDS.researcher, prompt],
@@ -285,62 +268,16 @@ Finish only when {pdf_path} represents your completed work for this iteration.
 
 def run_supervisor(iteration: int) -> str:
     pdf_path = pdf_project_path()
-    prompt = f"""
-You are the SUPERVISOR / REVIEWER.
-
-This is review iteration {iteration}.
-
-Read:
-
-{pdf_path}
-
-Do a thorough literature review and critically evaluate the paper. What should be done to make this really a good paper?
-
-DO NOT edit the paper.
-DO NOT rewrite the paper source.
-DO NOT modify {pdf_path}.
-
-Create exactly:
-
-feedback.md
-
-Use this structure:
-
-# Supervisor Review
-
-Iteration: {iteration}
-
-## Critical Issues
-
-## Major Issues
-
-## Minor Issues
-
-## Overall Assessment
-
-## Decision
-
-End with exactly one of:
-
-STATUS: REVISE
-
-or
-
-STATUS: READY
-
-For every issue explain:
-
-- where it occurs
-- what the problem is
-- why it matters
-- what the researcher should change
-
-Use STATUS: READY only if there are no remaining issues that materially
-prevent the paper from being submission-ready.
-"""
 
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
+
+    _, supervisor_prompt = prompts_for(COMMANDS)
+    prompt = render_prompt(
+        supervisor_prompt,
+        iteration=iteration,
+        pdf_path=pdf_path,
+    )
 
     return run(
         [*COMMANDS.supervisor, prompt],

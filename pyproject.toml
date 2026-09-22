@@ -1,6 +1,6 @@
 [project]
 name = "agent-runner"
-version = "0.4.0"
+version = "0.6.0"
 description = "Run a researcher/reviewer agent loop in marked project folders"
 readme = "README.md"
 requires-python = ">=3.10"

@@ -13,12 +13,10 @@ from .config import (
     load_agent_commands,
     setup_message,
 )
+from .documents import find_existing_pdf
 
 
 BRANCH_NAME = "agent"
-MARKER_FILES = ("paper.pdf", "TASK.md")
-
-
 def git(*args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess:
     return subprocess.run(
         ["git", *args],
@@ -98,7 +96,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not folder.is_dir():
         parser.error(f"not a directory: {folder}")
 
-    if not any((folder / marker).is_file() for marker in MARKER_FILES):
+    if not (folder / "TASK.md").is_file() and find_existing_pdf(folder) is None:
         return 0
 
     try:

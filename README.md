@@ -1,7 +1,8 @@
 # Agent Runner
 
 `agent-run` starts a researcher/reviewer agent loop in a project directory.
-It only acts on directories containing `paper.pdf` or `TASK.md`.
+It only acts on directories containing `paper.pdf` or `main.pdf` anywhere in
+their directory tree, or a top-level `TASK.md`.
 
 ## Requirements
 
@@ -80,10 +81,18 @@ agent-run path/to/project
 ```
 
 `agent-run` exits without changing anything unless the directory contains
-`paper.pdf` or `TASK.md`. When a marker exists, it creates or validates
-`agent-run.json` before making Git changes. With valid configuration, it
-initializes a Git repository if necessary, creates or switches to the `agent`
-branch, and runs the orchestrator with that directory as its project root.
+`paper.pdf` or `main.pdf` anywhere below it, or a top-level `TASK.md`. When
+both PDF names exist, `paper.pdf` takes precedence regardless of depth;
+otherwise `main.pdf` is used throughout the researcher and supervisor
+workflow. If multiple PDFs have the preferred name, the shallowest path wins,
+with alphabetical path order breaking a tie. The relative path is included in
+both agent prompts. A project containing only `TASK.md` creates `paper.pdf` at
+the project root by default.
+
+When a marker exists, `agent-run` creates or validates `agent-run.json` before
+making Git changes. With valid configuration, it initializes a Git repository
+if necessary, creates or switches to the `agent` branch, and runs the
+orchestrator with that directory as its project root.
 
 You can also run it as a Python module:
 

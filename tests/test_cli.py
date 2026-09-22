@@ -44,6 +44,19 @@ class AgentRunTests(unittest.TestCase):
                     ("review-agent", "--model", "reviewer-model"),
                 )
 
+    def test_main_pdf_starts_orchestrator(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            nested = folder / "build" / "output"
+            nested.mkdir(parents=True)
+            (nested / "main.pdf").write_bytes(b"pdf")
+            self.write_config(folder)
+            with patch.object(cli, "switch_to_agent_branch") as switch, \
+                    patch.object(cli.orchestrator, "main") as run:
+                self.assertEqual(cli.main([str(folder)]), 0)
+                switch.assert_called_once_with(folder.resolve())
+                run.assert_called_once()
+
     def test_missing_config_is_created_and_standard_settings_are_used(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)

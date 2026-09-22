@@ -69,6 +69,36 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(command[:-1], list(commands.researcher))
             self.assertIn("This is iteration 3.", command[-1])
 
+    def test_recursive_main_pdf_is_fallback_and_paper_pdf_has_priority(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            nested = folder / "documents" / "output"
+            nested.mkdir(parents=True)
+            main_pdf = nested / "main.pdf"
+            main_pdf.write_bytes(b"main")
+            self.assertEqual(orchestrator.select_pdf(folder), main_pdf)
+
+            paper_pdf = nested / "paper.pdf"
+            paper_pdf.write_bytes(b"paper")
+            self.assertEqual(orchestrator.select_pdf(folder), paper_pdf)
+
+    def test_main_pdf_name_is_used_in_supervisor_prompt(self):
+        commands = AgentCommands(
+            researcher=("author",),
+            supervisor=("reviewer",),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            main_pdf = root / "output" / "main.pdf"
+            with patch.object(orchestrator, "COMMANDS", commands), \
+                    patch.object(orchestrator, "ROOT", root), \
+                    patch.object(orchestrator, "PAPER", main_pdf), \
+                    patch.object(orchestrator, "run", return_value="") as run:
+                orchestrator.run_supervisor(1)
+                prompt = run.call_args.args[0][-1]
+                self.assertIn("output/main.pdf", prompt)
+                self.assertNotIn("paper.pdf", prompt)
+
 
 if __name__ == "__main__":
     unittest.main()

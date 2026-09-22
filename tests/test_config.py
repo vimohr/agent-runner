@@ -64,6 +64,7 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(commands.supervisor[:2], ("codex", "exec"))
             self.assertIn("{{iteration}}", commands.researcher_prompt)
             self.assertIn("{{pdf_path}}", commands.supervisor_prompt)
+            self.assertIn("commit all paper-related changes", commands.researcher_prompt)
 
     def test_default_configuration_can_be_materialized(self):
         with tempfile.TemporaryDirectory() as temporary:

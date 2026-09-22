@@ -86,6 +86,8 @@ Your responsibility is to research, write, and revise the academic paper.
 
 {feedback_instruction}
 
+Do a thorough literature analysis for context when appropriate.
+
 Requirements:
 
 1. Maintain the editable source of the paper.

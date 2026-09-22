@@ -1,0 +1,31 @@
+[project]
+name = "agent-runner"
+version = "0.4.0"
+description = "Run a researcher/reviewer agent loop in marked project folders"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = []
+keywords = ["agents", "automation", "claude", "codex"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+]
+
+[project.scripts]
+agent-run = "agent_runner.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+agent_runner = ["default-agent-run.json"]

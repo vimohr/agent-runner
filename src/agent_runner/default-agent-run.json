@@ -1,0 +1,10 @@
+{
+  "researcher": [
+    "claude", "-p", "--model", "claude-opus-4-8", "--effort", "max"
+  ],
+  "supervisor": [
+    "codex", "exec", "--model", "gpt-6-astra",
+    "--config", "model_reasoning_effort=\"max\"",
+    "--sandbox", "workspace-write"
+  ]
+}

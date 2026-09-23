@@ -128,6 +128,12 @@ with alphabetical path order breaking a tie. The relative path is included in
 both agent prompts. A project containing only `TASK.md` creates `paper.pdf` at
 the project root by default.
 
+After each successful researcher run, `agent-run` validates the PDF and commits
+project changes with an iteration-specific Git message. It skips the commit
+when there are no changes, and excludes `feedback.md`, `agent-run.json`, and
+`.agent-run` from its commits. The former commit instruction is ignored when
+loading an older generated `agent-run.json`.
+
 When a marker exists, `agent-run` creates or validates `agent-run.json` before
 making Git changes. With valid configuration, it initializes a Git repository
 if necessary, creates or switches to the `agent` branch, and runs the

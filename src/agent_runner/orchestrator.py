@@ -214,6 +214,37 @@ def validate_pdf() -> None:
         raise RuntimeError(f"{pdf_path} appears invalid or empty")
 
 
+def commit_researcher_changes(iteration: int) -> None:
+    """Commit project changes while keeping runner and reviewer files out."""
+    paths = (
+        ".",
+        ":(exclude).agent-run",
+        ":(exclude)feedback.md",
+        ":(exclude)agent-run.json",
+    )
+    subprocess.run(["git", "add", "-A", "--", *paths], cwd=ROOT, check=True)
+    changes = subprocess.run(
+        ["git", "diff", "--cached", "--quiet", "--", *paths],
+        cwd=ROOT,
+        check=False,
+    )
+    if changes.returncode == 0:
+        print("No researcher changes to commit.")
+        return
+    if changes.returncode != 1:
+        raise RuntimeError("Could not inspect staged researcher changes")
+
+    subprocess.run(
+        [
+            "git", "commit", "--only",
+            "-m", f"Researcher iteration {iteration}: update paper",
+            "--", *paths,
+        ],
+        cwd=ROOT,
+        check=True,
+    )
+
+
 def validate_feedback() -> str:
     if not FEEDBACK.exists():
         raise RuntimeError("Supervisor did not create feedback.md")
@@ -310,6 +341,7 @@ def main(
 
         validate_pdf()
         print(f"{pdf_project_path()} validated.")
+        commit_researcher_changes(iteration)
 
         # A stale file must not count as the new supervisor review.
         if FEEDBACK.exists():

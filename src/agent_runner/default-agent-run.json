@@ -33,7 +33,6 @@
     "4. Verify that {{pdf_path}} was successfully generated.",
     "5. Do NOT create or modify feedback.md.",
     "6. Do NOT decide whether the project is finished.",
-    "7. When your work for this iteration is complete, commit all paper-related changes to Git with a descriptive commit message. Do not commit .agent-run logs or unrelated files.",
     "",
     "Finish only when {{pdf_path}} represents your completed work for this iteration."
   ],

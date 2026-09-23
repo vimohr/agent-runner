@@ -1,5 +1,6 @@
 import json
 import io
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from unittest.mock import patch
 from agent_runner.config import (
     AgentCommands,
     ConfigurationError,
+    LEGACY_RESEARCHER_COMMIT_INSTRUCTION,
     default_config_text,
     ensure_agent_config,
     load_agent_commands,
@@ -17,6 +19,49 @@ from agent_runner import orchestrator
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_runner_commits_researcher_files_only(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            def git(*args):
+                return subprocess.run(
+                    ["git", *args], cwd=root, check=True,
+                    capture_output=True, text=True,
+                ).stdout.strip()
+
+            git("init", "-q")
+            git("config", "user.name", "Test Author")
+            git("config", "user.email", "author@example.com")
+            (root / "paper.tex").write_text("Initial paper")
+            git("add", "paper.tex")
+            git("commit", "-qm", "Initial paper")
+
+            (root / "paper.tex").write_text("Revised paper")
+            (root / "paper.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 1000)
+            (root / "feedback.md").write_text("Old feedback")
+            (root / "agent-run.json").write_text("{}")
+            (root / ".agent-run").mkdir()
+            (root / ".agent-run" / "agent-run.log").write_text("log")
+            git("add", "feedback.md", "agent-run.json", ".agent-run/agent-run.log")
+
+            with patch.object(orchestrator, "ROOT", root):
+                orchestrator.commit_researcher_changes(2)
+                first_commit = git("rev-parse", "HEAD")
+                orchestrator.commit_researcher_changes(2)
+
+            self.assertEqual(git("rev-parse", "HEAD"), first_commit)
+            self.assertEqual(
+                set(git("show", "--pretty=format:", "--name-only", "HEAD").splitlines()),
+                {"paper.tex", "paper.pdf"},
+            )
+            self.assertEqual(
+                git("log", "-1", "--format=%s"),
+                "Researcher iteration 2: update paper",
+            )
+            self.assertEqual(
+                set(git("diff", "--cached", "--name-only").splitlines()),
+                {"feedback.md", "agent-run.json", ".agent-run/agent-run.log"},
+            )
+
     def test_run_streams_and_logs_agent_output(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -64,7 +109,7 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(commands.supervisor[:2], ("codex", "exec"))
             self.assertIn("{{iteration}}", commands.researcher_prompt)
             self.assertIn("{{pdf_path}}", commands.supervisor_prompt)
-            self.assertIn("commit all paper-related changes", commands.researcher_prompt)
+            self.assertNotIn("commit", commands.researcher_prompt.lower())
 
     def test_default_configuration_can_be_materialized(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -76,6 +121,21 @@ class ConfigurationTests(unittest.TestCase):
             same_path, created_again = ensure_agent_config(folder)
             self.assertFalse(created_again)
             self.assertEqual(same_path, path)
+
+    def test_old_generated_prompt_no_longer_requests_a_commit(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "agent-run.json").write_text(json.dumps({
+                "researcher": ["author"],
+                "supervisor": ["reviewer"],
+                "researcher_prompt": [
+                    "Write the paper.",
+                    LEGACY_RESEARCHER_COMMIT_INSTRUCTION,
+                ],
+            }))
+            commands = load_agent_commands(folder)
+            self.assertNotIn("commit", commands.researcher_prompt.lower())
+            self.assertIn("Write the paper.", commands.researcher_prompt)
 
     def test_string_commands_are_supported(self):
         with tempfile.TemporaryDirectory() as temporary:

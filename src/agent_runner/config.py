@@ -10,6 +10,11 @@ from typing import Mapping, Optional, Sequence
 
 CONFIG_FILENAME = "agent-run.json"
 DEFAULT_CONFIG_FILENAME = "default-agent-run.json"
+LEGACY_RESEARCHER_COMMIT_INSTRUCTION = (
+    "7. When your work for this iteration is complete, commit all "
+    "paper-related changes to Git with a descriptive commit message. "
+    "Do not commit .agent-run logs or unrelated files."
+)
 
 
 def default_config_text() -> str:
@@ -117,7 +122,7 @@ def load_agent_commands(folder: Path) -> AgentCommands:
         researcher_prompt=_parse_prompt(
             "researcher_prompt",
             contents.get("researcher_prompt", default_researcher_prompt),
-        ),
+        ).replace(LEGACY_RESEARCHER_COMMIT_INSTRUCTION, ""),
         supervisor_prompt=_parse_prompt(
             "supervisor_prompt",
             contents.get("supervisor_prompt", default_supervisor_prompt),

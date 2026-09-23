@@ -46,6 +46,7 @@
     "{{pdf_path}}",
     "",
     "Do a thorough literature review and critically evaluate the paper. What should be done to make this really a good paper?",
+    "You might suggest more extensive experiments, the main goal is to make this a high-quality paper, which requires good and presentable results.",
     "",
     "DO NOT edit the paper.",
     "DO NOT rewrite the paper source.",

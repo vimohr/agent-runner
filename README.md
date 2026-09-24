@@ -115,6 +115,44 @@ To change the heartbeat interval or put a time limit on each individual agent:
 agent-run --heartbeat 10 --timeout 3600 path/to/project
 ```
 
+To receive an email when the supervisor marks the paper READY:
+
+```sh
+agent-run . --email="you@example.com"
+```
+
+If the cluster provides `mail` or `mailx`, `agent-run` uses it automatically
+when `sendmail` is unavailable. No SMTP settings are needed. You can check
+delivery from the same shell where the job runs:
+
+```sh
+printf 'Cluster mail test\n' | mail -s 'agent-run test' you@example.com
+```
+
+If the cluster has no local mail command, configure an SMTP relay in the
+environment:
+
+```sh
+export AGENT_RUN_SMTP_HOST="smtp.example.com"
+export AGENT_RUN_EMAIL_FROM="agent@example.com"
+export AGENT_RUN_SMTP_USERNAME="agent@example.com"
+# Set AGENT_RUN_SMTP_PASSWORD through your cluster's secret management.
+agent-run . --email="you@example.com"
+```
+
+SMTP defaults to STARTTLS on port 587. Set `AGENT_RUN_SMTP_SECURITY=ssl` for
+implicit TLS (default port 465), or `AGENT_RUN_SMTP_SECURITY=none` for a trusted
+relay without authentication (default port 25). `AGENT_RUN_SMTP_PORT` overrides
+the default port. Username and password are optional together; authentication
+requires TLS. If `AGENT_RUN_SMTP_HOST` is unset, `agent-run` uses `sendmail`,
+`mail`, or `mailx`. The message includes the project and PDF paths. If sending
+fails, `agent-run` reports an error after the loop finishes. The cluster must
+allow connections to the chosen SMTP relay.
+
+For an internal cluster relay that does not require a login, set the host,
+sender address, and `AGENT_RUN_SMTP_SECURITY=none`; leave the username and
+password unset. Ask the cluster administrator for the relay host and port.
+
 There is no timeout by default because a legitimate research or compilation
 step may take a long time. Pressing Ctrl-C stops the current agent and its
 child processes cleanly; the log remains available for diagnosis.

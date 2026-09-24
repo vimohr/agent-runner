@@ -19,6 +19,35 @@ from agent_runner import orchestrator
 
 
 class ConfigurationTests(unittest.TestCase):
+    def test_runner_commits_when_runner_files_are_ignored(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+
+            def git(*args):
+                return subprocess.run(
+                    ["git", *args], cwd=root, check=True,
+                    capture_output=True, text=True,
+                ).stdout.strip()
+
+            git("init", "-q")
+            git("config", "user.name", "Test Author")
+            git("config", "user.email", "author@example.com")
+            (root / ".gitignore").write_text(".agent-run/\nagent-run.json\n")
+            (root / "paper.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 1000)
+            (root / "agent-run.json").write_text("{}")
+            (root / ".agent-run").mkdir()
+            (root / ".agent-run" / "agent-run.log").write_text("log")
+
+            with patch.object(orchestrator, "ROOT", root):
+                orchestrator.commit_researcher_changes(1)
+
+            self.assertEqual(
+                set(git(
+                    "show", "--pretty=format:", "--name-only", "HEAD",
+                ).splitlines()),
+                {".gitignore", "paper.pdf"},
+            )
+
     def test_runner_commits_researcher_files_only(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

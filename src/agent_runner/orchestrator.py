@@ -216,15 +216,31 @@ def validate_pdf() -> None:
 
 def commit_researcher_changes(iteration: int) -> None:
     """Commit project changes while keeping runner and reviewer files out."""
-    paths = (
-        ".",
-        ":(exclude).agent-run",
-        ":(exclude)feedback.md",
-        ":(exclude)agent-run.json",
+    def researcher_paths(*git_args: str) -> list[str]:
+        result = subprocess.run(
+            ["git", *git_args], cwd=ROOT, check=True, capture_output=True,
+        )
+        return [
+            ":(literal)" + os.fsdecode(path)
+            for path in result.stdout.split(b"\0")
+            if path and path.split(b"/", 1)[0] not in {
+                b".agent-run", b"feedback.md", b"agent-run.json",
+            }
+        ]
+
+    # Git reports explicitly excluded ignored paths as an error to `git add`.
+    # Enumerate tracked and non-ignored untracked files instead.
+    paths = researcher_paths(
+        "ls-files", "-z", "--cached", "--others", "--exclude-standard",
     )
-    subprocess.run(["git", "add", "-A", "--", *paths], cwd=ROOT, check=True)
+    if paths:
+        subprocess.run(["git", "add", "-A", "--", *paths], cwd=ROOT, check=True)
+    staged_paths = researcher_paths("diff", "--cached", "--name-only", "-z")
+    if not staged_paths:
+        print("No researcher changes to commit.")
+        return
     changes = subprocess.run(
-        ["git", "diff", "--cached", "--quiet", "--", *paths],
+        ["git", "diff", "--cached", "--quiet", "--", *staged_paths],
         cwd=ROOT,
         check=False,
     )
@@ -238,7 +254,7 @@ def commit_researcher_changes(iteration: int) -> None:
         [
             "git", "commit", "--only",
             "-m", f"Researcher iteration {iteration}: update paper",
-            "--", *paths,
+            "--", *staged_paths,
         ],
         cwd=ROOT,
         check=True,

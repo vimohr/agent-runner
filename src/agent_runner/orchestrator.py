@@ -1,8 +1,9 @@
-"""Researcher and supervisor agent orchestration loop."""
+"""Researcher, supervisor, and independent referee orchestration loop."""
 
 from pathlib import Path
 import os
 import queue
+import re
 import shlex
 import signal
 import subprocess
@@ -12,13 +13,14 @@ import time
 from typing import Optional, Sequence, TextIO
 
 from . import __version__
-from .config import AgentCommands, prompts_for
+from .config import AgentCommands, prompts_for, reviewer_command_for
 from .documents import find_existing_pdf
 
 
 ROOT = Path.cwd()
 PAPER = ROOT / "paper.pdf"
 FEEDBACK = ROOT / "feedback.md"
+REVIEWER_FEEDBACK = ROOT / "reviewer-feedback.md"
 
 # Allow some back-and-forth while still bounding a runaway review cycle.
 MAX_ITERATIONS = 100
@@ -224,7 +226,8 @@ def commit_researcher_changes(iteration: int) -> None:
             ":(literal)" + os.fsdecode(path)
             for path in result.stdout.split(b"\0")
             if path and path.split(b"/", 1)[0] not in {
-                b".agent-run", b"feedback.md", b"agent-run.json",
+                b".agent-run", b"feedback.md", b"reviewer-feedback.md",
+                b"agent-run.json",
             }
         ]
 
@@ -261,15 +264,31 @@ def commit_researcher_changes(iteration: int) -> None:
     )
 
 
+def validate_decision(path: Path, role: str, statuses: set[str]) -> str:
+    if not path.is_file():
+        raise RuntimeError(f"{role} did not create {path.name}")
+    lines = path.read_text(encoding="utf-8").strip().splitlines()
+    if not lines:
+        raise RuntimeError(f"{path.name} is empty")
+    match = re.fullmatch(r"STATUS: ([A-Z]+)", lines[-1].strip())
+    if match is None or match.group(1) not in statuses:
+        raise RuntimeError(
+            f"{path.name} must end with exactly one of: "
+            + ", ".join(f"STATUS: {status}" for status in sorted(statuses))
+        )
+    if sum(line.strip().startswith("STATUS:") for line in lines) != 1:
+        raise RuntimeError(f"{path.name} must contain exactly one STATUS line")
+    return match.group(1)
+
+
 def validate_feedback() -> str:
-    if not FEEDBACK.exists():
-        raise RuntimeError("Supervisor did not create feedback.md")
+    return validate_decision(FEEDBACK, "Supervisor", {"READY", "REVISE"})
 
-    text = FEEDBACK.read_text()
-    if "STATUS:" not in text:
-        raise RuntimeError("feedback.md is missing STATUS")
 
-    return text
+def validate_reviewer_feedback() -> str:
+    return validate_decision(
+        REVIEWER_FEEDBACK, "Reviewer", {"ACCEPT", "REVISE", "REJECT"}
+    )
 
 
 def render_prompt(template: str, **values: object) -> str:
@@ -281,24 +300,35 @@ def render_prompt(template: str, **values: object) -> str:
 
 
 def run_researcher(iteration: int) -> str:
-    feedback_instruction = ""
+    feedback_instruction = (
+        "Read feedback.md and reviewer-feedback.md when present. "
+        "Supervisor feedback takes priority if the two conflict."
+    )
     task_instruction = ""
 
     if (ROOT / "TASK.md").exists():
         task_instruction = "Read TASK.md and use it as the project brief."
 
     if FEEDBACK.exists():
-        feedback_instruction = """Read feedback.md carefully.
+        feedback_instruction += """
+
+Read feedback.md carefully.
 
 Address every CRITICAL and MAJOR issue.
 Address MINOR issues when appropriate."""
+
+    if REVIEWER_FEEDBACK.exists():
+        feedback_instruction += """
+
+Read reviewer-feedback.md carefully. Address the referee's rejection or
+revision requests, including evidence, analysis, and manuscript changes."""
 
     pdf_path = pdf_project_path()
 
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
 
-    researcher_prompt, _ = prompts_for(COMMANDS)
+    researcher_prompt, _, _ = prompts_for(COMMANDS)
     prompt = render_prompt(
         researcher_prompt,
         iteration=iteration,
@@ -306,6 +336,8 @@ Address MINOR issues when appropriate."""
         task_instruction=task_instruction,
         feedback_instruction=feedback_instruction,
     )
+    if "{{feedback_instruction}}" not in researcher_prompt:
+        prompt += feedback_instruction + "\n"
 
     return run(
         [*COMMANDS.researcher, prompt],
@@ -319,16 +351,41 @@ def run_supervisor(iteration: int) -> str:
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
 
-    _, supervisor_prompt = prompts_for(COMMANDS)
+    _, supervisor_prompt, _ = prompts_for(COMMANDS)
+    reviewer_instruction = (
+        "Read reviewer-feedback.md as historical context: it explains why an "
+        "earlier draft was rejected or sent for revision. Independently assess "
+        "the current draft and verify that its substantive concerns are resolved "
+        "before marking the paper READY."
+        if REVIEWER_FEEDBACK.exists() else ""
+    )
     prompt = render_prompt(
         supervisor_prompt,
         iteration=iteration,
         pdf_path=pdf_path,
+        reviewer_feedback_instruction=reviewer_instruction,
     )
-
+    if (
+        reviewer_instruction
+        and "{{reviewer_feedback_instruction}}" not in supervisor_prompt
+    ):
+        prompt += reviewer_instruction + "\n"
     return run(
         [*COMMANDS.supervisor, prompt],
         label=f"supervisor iteration {iteration}",
+    )
+
+
+def run_reviewer(iteration: int) -> str:
+    if COMMANDS is None:
+        raise RuntimeError("Agent commands have not been configured")
+    _, _, reviewer_prompt = prompts_for(COMMANDS)
+    prompt = render_prompt(
+        reviewer_prompt, iteration=iteration, pdf_path=pdf_project_path(),
+    )
+    return run(
+        [*reviewer_command_for(COMMANDS), prompt],
+        label=f"reviewer round {iteration}",
     )
 
 
@@ -339,12 +396,13 @@ def main(
     timeout_seconds: Optional[float] = None,
     heartbeat_seconds: float = 30.0,
 ) -> None:
-    global ROOT, PAPER, FEEDBACK, COMMANDS
+    global ROOT, PAPER, FEEDBACK, REVIEWER_FEEDBACK, COMMANDS
     global AGENT_TIMEOUT_SECONDS, HEARTBEAT_SECONDS
 
     ROOT = Path(project_root).resolve()
     PAPER = select_pdf(ROOT)
     FEEDBACK = ROOT / "feedback.md"
+    REVIEWER_FEEDBACK = ROOT / "reviewer-feedback.md"
     COMMANDS = commands
     AGENT_TIMEOUT_SECONDS = timeout_seconds
     HEARTBEAT_SECONDS = heartbeat_seconds
@@ -355,13 +413,12 @@ def main(
         print("Running researcher...")
         run_researcher(iteration)
 
+        # The next supervisor must not see its own previous report.
+        FEEDBACK.unlink(missing_ok=True)
+
         validate_pdf()
         print(f"{pdf_project_path()} validated.")
         commit_researcher_changes(iteration)
-
-        # A stale file must not count as the new supervisor review.
-        if FEEDBACK.exists():
-            FEEDBACK.unlink()
 
         print("Running supervisor...")
         run_supervisor(iteration)
@@ -369,16 +426,21 @@ def main(
         feedback = validate_feedback()
         print("feedback.md validated.")
 
-        if "STATUS: READY" in feedback:
-            print("\nSupervisor marked paper READY.")
+        if feedback == "REVISE":
+            print("Supervisor requested another revision.")
+            continue
+
+        print("Supervisor marked paper READY. Running independent reviewer...")
+        # The external reviewer judges this draft without previous reports.
+        FEEDBACK.unlink(missing_ok=True)
+        REVIEWER_FEEDBACK.unlink(missing_ok=True)
+        run_reviewer(iteration)
+        decision = validate_reviewer_feedback()
+        print("reviewer-feedback.md validated.")
+        if decision == "ACCEPT":
+            print("\nReviewer accepted the paper.")
             return
-
-        if "STATUS: REVISE" not in feedback:
-            raise RuntimeError(
-                "Supervisor returned neither READY nor REVISE."
-            )
-
-        print("Supervisor requested another revision.")
+        print(f"Reviewer requested another revision ({decision}).")
 
     raise RuntimeError(
         f"Maximum iterations ({MAX_ITERATIONS}) reached."

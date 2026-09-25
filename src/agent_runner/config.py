@@ -35,6 +35,8 @@ class AgentCommands:
     supervisor: tuple[str, ...]
     researcher_prompt: Optional[str] = None
     supervisor_prompt: Optional[str] = None
+    reviewer: Optional[tuple[str, ...]] = None
+    reviewer_prompt: Optional[str] = None
 
 
 def _parse_command(name: str, value: object) -> tuple[str, ...]:
@@ -80,11 +82,16 @@ def _parse_prompt(name: str, value: object) -> str:
     return prompt
 
 
-def _default_prompts() -> tuple[str, str]:
-    contents = json.loads(default_config_text())
+def _defaults() -> Mapping[str, object]:
+    return json.loads(default_config_text())
+
+
+def _default_prompts() -> tuple[str, str, str]:
+    contents = _defaults()
     return (
         _parse_prompt("researcher_prompt", contents["researcher_prompt"]),
         _parse_prompt("supervisor_prompt", contents["supervisor_prompt"]),
+        _parse_prompt("reviewer_prompt", contents["reviewer_prompt"]),
     )
 
 
@@ -115,7 +122,8 @@ def load_agent_commands(folder: Path) -> AgentCommands:
             f"{CONFIG_FILENAME} is missing: {', '.join(missing)}"
         )
 
-    default_researcher_prompt, default_supervisor_prompt = _default_prompts()
+    (default_researcher_prompt, default_supervisor_prompt,
+     default_reviewer_prompt) = _default_prompts()
     return AgentCommands(
         researcher=_parse_command("researcher", contents["researcher"]),
         supervisor=_parse_command("supervisor", contents["supervisor"]),
@@ -127,22 +135,36 @@ def load_agent_commands(folder: Path) -> AgentCommands:
             "supervisor_prompt",
             contents.get("supervisor_prompt", default_supervisor_prompt),
         ),
+        reviewer=_parse_command(
+            "reviewer", contents.get("reviewer", _defaults()["reviewer"]),
+        ),
+        reviewer_prompt=_parse_prompt(
+            "reviewer_prompt",
+            contents.get("reviewer_prompt", default_reviewer_prompt),
+        ),
     )
 
 
-def prompts_for(commands: AgentCommands) -> tuple[str, str]:
+def prompts_for(commands: AgentCommands) -> tuple[str, str, str]:
     """Return configured prompts, falling back for programmatic callers."""
     if (
         commands.researcher_prompt is not None
         and commands.supervisor_prompt is not None
+        and commands.reviewer_prompt is not None
     ):
-        return commands.researcher_prompt, commands.supervisor_prompt
+        return (commands.researcher_prompt, commands.supervisor_prompt,
+                commands.reviewer_prompt)
 
-    default_researcher, default_supervisor = _default_prompts()
+    default_researcher, default_supervisor, default_reviewer = _default_prompts()
     return (
         commands.researcher_prompt or default_researcher,
         commands.supervisor_prompt or default_supervisor,
+        commands.reviewer_prompt or default_reviewer,
     )
+
+
+def reviewer_command_for(commands: AgentCommands) -> tuple[str, ...]:
+    return commands.reviewer or _parse_command("reviewer", _defaults()["reviewer"])
 
 
 def ensure_agent_config(folder: Path) -> tuple[Path, bool]:

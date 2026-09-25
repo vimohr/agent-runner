@@ -1,6 +1,6 @@
 # Agent Runner
 
-`agent-run` starts a researcher/reviewer agent loop in a project directory.
+`agent-run` starts a researcher, supervisor, and independent reviewer loop in a project directory.
 It only acts on directories containing `paper.pdf` or `main.pdf` anywhere in
 their directory tree, or a top-level `TASK.md`.
 
@@ -46,7 +46,7 @@ python3 -m pip install -e .
 ## Usage
 
 On the first run for a marked project, `agent-run` creates an `agent-run.json`
-file containing the standard researcher and supervisor commands and prompts.
+file containing the standard researcher, supervisor, and reviewer commands and prompts.
 It prints the file location and asks whether to continue with the standard
 settings.
 Answer `yes` to run immediately, or `no` (the default) to stop before any Git
@@ -62,9 +62,14 @@ For example:
 ```json
 {
   "researcher": [
-    "claude", "-p", "--model", "claude-opus-4-8", "--effort", "max"
+    "codex", "exec", "--model", "gpt-6-astra",
+    "--config", "model_reasoning_effort=\"max\"",
+    "--sandbox", "workspace-write"
   ],
   "supervisor": [
+    "claude", "-p", "--model", "claude-opus-5-5", "--effort", "max"
+  ],
+  "reviewer": [
     "codex", "exec", "--model", "gpt-6-astra",
     "--config", "model_reasoning_effort=\"max\"",
     "--sandbox", "workspace-write"
@@ -77,9 +82,14 @@ For example:
     "{{feedback_instruction}}"
   ],
   "supervisor_prompt": [
-    "You are the SUPERVISOR / REVIEWER.",
+    "You are the SUPERVISOR.",
     "This is review iteration {{iteration}}.",
-    "Critically review {{pdf_path}} and write feedback.md."
+    "Critically review {{pdf_path}} and write feedback.md.",
+    "{{reviewer_feedback_instruction}}"
+  ],
+  "reviewer_prompt": [
+    "You are an independent referee for a Physical Review style journal.",
+    "Review {{pdf_path}} and write reviewer-feedback.md with STATUS: ACCEPT, REVISE, or REJECT."
   ]
 }
 ```
@@ -87,11 +97,29 @@ For example:
 The complete generated file contains the standard prompts. The following
 placeholders are replaced just before each agent starts:
 
-- Both prompts: `{{iteration}}`, `{{pdf_path}}`
+- All three prompts: `{{iteration}}`, `{{pdf_path}}`
 - Researcher only: `{{task_instruction}}`, `{{feedback_instruction}}`
+- Supervisor only: `{{reviewer_feedback_instruction}}`
 
-Prompt fields are optional for compatibility with existing configurations;
-when omitted, the standard prompt is used.
+The reviewer command and all prompt fields are optional for compatibility with
+existing configurations. When omitted, the standard reviewer command or prompt
+is used. Add a `reviewer` command in `agent-run.json` to select a different
+agent or model for the independent review.
+
+The researcher writes the draft and the supervisor writes `feedback.md` with
+`STATUS: REVISE` or `STATUS: READY`. A `READY` decision starts a fresh external
+review. Before the reviewer starts, both old feedback files are removed; the
+reviewer prompt also forbids consulting prior reviews and agent logs. The
+reviewer writes `reviewer-feedback.md` with `STATUS: REJECT`,
+`STATUS: REVISE`, or `STATUS: ACCEPT`. Rejection and revision both return to the
+researcher, then the supervisor. The next `READY` decision starts another fresh
+review. The loop ends only when the reviewer accepts the draft, including when
+only negligible improvements remain. Each referee report remains available to
+the researcher and supervisor during the next revision cycle. The supervisor
+sees it as the reason an earlier draft was rejected or sent back. The old
+`feedback.md` is removed as soon as the researcher finishes, before the next
+supervisor round. If both reports are present when the researcher starts, the
+supervisor's instructions take priority.
 
 Each command may alternatively be a shell-style string, but argument arrays
 are recommended because their quoting is unambiguous. Shell features such as
@@ -115,7 +143,7 @@ To change the heartbeat interval or put a time limit on each individual agent:
 agent-run --heartbeat 10 --timeout 3600 path/to/project
 ```
 
-To receive an email when the supervisor marks the paper READY:
+To receive an email when the external reviewer accepts the paper:
 
 ```sh
 agent-run . --email="you@example.com"
@@ -160,7 +188,7 @@ child processes cleanly; the log remains available for diagnosis.
 `agent-run` exits without changing anything unless the directory contains
 `paper.pdf` or `main.pdf` anywhere below it, or a top-level `TASK.md`. When
 both PDF names exist, `paper.pdf` takes precedence regardless of depth;
-otherwise `main.pdf` is used throughout the researcher and supervisor
+otherwise `main.pdf` is used throughout the researcher, supervisor, and reviewer
 workflow. If multiple PDFs have the preferred name, the shallowest path wins,
 with alphabetical path order breaking a tie. The relative path is included in
 both agent prompts. A project containing only `TASK.md` creates `paper.pdf` at
@@ -168,9 +196,9 @@ the project root by default.
 
 After each successful researcher run, `agent-run` validates the PDF and commits
 project changes with an iteration-specific Git message. It skips the commit
-when there are no changes, and excludes `feedback.md`, `agent-run.json`, and
-`.agent-run` from its commits. The former commit instruction is ignored when
-loading an older generated `agent-run.json`.
+when there are no changes, and excludes `feedback.md`, `reviewer-feedback.md`,
+`agent-run.json`, and `.agent-run` from its commits. The former commit
+instruction is ignored when loading an older generated `agent-run.json`.
 
 When a marker exists, `agent-run` creates or validates `agent-run.json` before
 making Git changes. With valid configuration, it initializes a Git repository

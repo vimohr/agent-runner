@@ -108,7 +108,7 @@ def send_completion_email(recipient: str, folder: Path) -> None:
     message["To"] = recipient
     message["Subject"] = f"agent-run completed: {folder.name}"
     message.set_content(
-        "The supervisor marked the paper READY.\n\n"
+        "The supervisor marked the paper READY and the external reviewer accepted it.\n\n"
         f"Project: {folder}\n"
         f"PDF: {orchestrator.select_pdf(folder)}\n"
     )
@@ -195,13 +195,13 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("folder", type=Path)
     parser.add_argument(
         "--email", type=email_address, metavar="ADDRESS",
-        help="email ADDRESS when the supervisor marks the paper READY",
+        help="email ADDRESS when the reviewer accepts the paper",
     )
     parser.add_argument(
         "--timeout",
         type=positive_number,
         metavar="SECONDS",
-        help="stop an individual researcher or supervisor after this long",
+        help="stop an individual researcher, supervisor, or reviewer after this long",
     )
     parser.add_argument(
         "--heartbeat",

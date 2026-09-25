@@ -1,8 +1,13 @@
 {
   "researcher": [
-    "claude", "-p", "--model", "claude-opus-4-8", "--effort", "max"
+    "codex", "exec", "--model", "gpt-6-astra",
+    "--config", "model_reasoning_effort=\"max\"",
+    "--sandbox", "workspace-write"
   ],
   "supervisor": [
+    "claude", "-p", "--model", "claude-opus-5-5", "--effort", "max"
+  ],
+  "reviewer": [
     "codex", "exec", "--model", "gpt-6-astra",
     "--config", "model_reasoning_effort=\"max\"",
     "--sandbox", "workspace-write"
@@ -29,25 +34,27 @@
     "Requirements:",
     "",
     "1. Maintain the editable source of the paper.",
-    "2. Incorporate supervisor feedback where supplied and when you consider it appropriate.",
+    "2. Read both feedback.md and reviewer-feedback.md when present. Address both, giving supervisor feedback priority if they conflict.",
     "3. Compile/export the completed paper to:",
     "",
     "   {{pdf_path}}",
     "",
     "4. Verify that {{pdf_path}} was successfully generated.",
-    "5. Do NOT create or modify feedback.md.",
+    "5. Do NOT create or modify feedback.md or reviewer-feedback.md.",
     "6. Do NOT decide whether the project is finished.",
     "",
     "Finish only when {{pdf_path}} represents your completed work for this iteration."
   ],
   "supervisor_prompt": [
-    "You are the SUPERVISOR / REVIEWER.",
+    "You are the SUPERVISOR.",
     "",
     "This is review iteration {{iteration}}.",
     "",
     "Read:",
     "",
     "{{pdf_path}}",
+    "",
+    "{{reviewer_feedback_instruction}}",
     "",
     "Do a thorough literature review and critically evaluate the paper. What should be done to make this really a good paper?",
     "You might also suggest more extensive experiments, the main goal is to make this a high-quality paper, which requires good and presentable results.",
@@ -97,5 +104,19 @@
     "",
     "Use STATUS: READY only if there are no remaining issues that materially",
     "prevent the paper from being submission-ready."
+  ],
+  "reviewer_prompt": [
+    "You are an independent external REFEREE for a Physical Review style physics journal.",
+    "This is referee round {{iteration}}. Assess the current draft afresh and independently.",
+    "Review the current paper without consulting previous supervisor or referee reports, prior agent logs, or review history.",
+    "Read {{pdf_path}} and inspect the source, analyses, data, and references as needed.",
+    "Evaluate originality, importance, fit for the journal, correctness of theory and calculations, methods, uncertainty and statistics, robustness of results, reproducibility, comparison with prior work, and whether claims follow from evidence.",
+    "Check figures, captions, citations, clarity, and presentation. Identify concrete omissions, unsupported conclusions, and needed experiments or analyses. Verify important literature claims when possible.",
+    "Be rigorous and fair. Distinguish work required for acceptance from optional polish. Acceptance is appropriate when only negligible improvements remain.",
+    "Do not edit the paper, its source, or {{pdf_path}}. Do not modify feedback.md.",
+    "Write only reviewer-feedback.md, with sections: # Referee Report; ## Summary and Recommendation; ## Major Concerns; ## Minor Comments; ## Required Changes; ## Decision.",
+    "For each concern identify its location, explain why it matters, and state what evidence or change would resolve it.",
+    "End with exactly one status line: STATUS: ACCEPT, STATUS: REVISE, or STATUS: REJECT.",
+    "Use REJECT for work that does not yet meet the journal standard, REVISE for addressable substantive concerns, and ACCEPT only if no substantive concerns remain."
   ]
 }

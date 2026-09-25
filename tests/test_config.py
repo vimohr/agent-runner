@@ -67,10 +67,11 @@ class ConfigurationTests(unittest.TestCase):
             (root / "paper.tex").write_text("Revised paper")
             (root / "paper.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 1000)
             (root / "feedback.md").write_text("Old feedback")
+            (root / "reviewer-feedback.md").write_text("Old referee report")
             (root / "agent-run.json").write_text("{}")
             (root / ".agent-run").mkdir()
             (root / ".agent-run" / "agent-run.log").write_text("log")
-            git("add", "feedback.md", "agent-run.json", ".agent-run/agent-run.log")
+            git("add", "feedback.md", "reviewer-feedback.md", "agent-run.json", ".agent-run/agent-run.log")
 
             with patch.object(orchestrator, "ROOT", root):
                 orchestrator.commit_researcher_changes(2)
@@ -88,7 +89,7 @@ class ConfigurationTests(unittest.TestCase):
             )
             self.assertEqual(
                 set(git("diff", "--cached", "--name-only").splitlines()),
-                {"feedback.md", "agent-run.json", ".agent-run/agent-run.log"},
+                {"feedback.md", "reviewer-feedback.md", "agent-run.json", ".agent-run/agent-run.log"},
             )
 
     def test_run_streams_and_logs_agent_output(self):
@@ -134,10 +135,12 @@ class ConfigurationTests(unittest.TestCase):
             folder = Path(temporary)
             (folder / "agent-run.json").write_text(default_config_text())
             commands = load_agent_commands(folder)
-            self.assertEqual(commands.researcher[0], "claude")
-            self.assertEqual(commands.supervisor[:2], ("codex", "exec"))
+            self.assertEqual(commands.researcher[:2], ("codex", "exec"))
+            self.assertEqual(commands.supervisor[0], "claude")
+            self.assertEqual(commands.reviewer[:2], ("codex", "exec"))
             self.assertIn("{{iteration}}", commands.researcher_prompt)
             self.assertIn("{{pdf_path}}", commands.supervisor_prompt)
+            self.assertIn("Physical Review", commands.reviewer_prompt)
             self.assertNotIn("commit", commands.researcher_prompt.lower())
 
     def test_default_configuration_can_be_materialized(self):
@@ -180,6 +183,7 @@ class ConfigurationTests(unittest.TestCase):
                 ("author", "--model", "model with spaces"),
             )
             self.assertIn("RESEARCHER / AUTHOR", commands.researcher_prompt)
+            self.assertEqual(commands.reviewer[:2], ("codex", "exec"))
 
     def test_custom_prompts_are_loaded_and_rendered(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -223,6 +227,36 @@ class ConfigurationTests(unittest.TestCase):
             }))
             with self.assertRaises(ConfigurationError):
                 load_agent_commands(folder)
+
+    def test_invalid_reviewer_command_is_rejected(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "agent-run.json").write_text(json.dumps({
+                "researcher": ["author"],
+                "supervisor": ["supervisor"],
+                "reviewer": [],
+            }))
+            with self.assertRaises(ConfigurationError):
+                load_agent_commands(folder)
+
+    def test_custom_reviewer_command_and_prompt_are_used(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "agent-run.json").write_text(json.dumps({
+                "researcher": ["author"],
+                "supervisor": ["supervisor"],
+                "reviewer": ["external-referee", "--strict"],
+                "reviewer_prompt": "Referee round {{iteration}}: read {{pdf_path}}",
+            }))
+            commands = load_agent_commands(folder)
+            with patch.object(orchestrator, "COMMANDS", commands), \
+                    patch.object(orchestrator, "ROOT", folder), \
+                    patch.object(orchestrator, "PAPER", folder / "paper.pdf"), \
+                    patch.object(orchestrator, "run", return_value="") as run:
+                orchestrator.run_reviewer(3)
+            self.assertEqual(run.call_args.args[0], [
+                "external-referee", "--strict", "Referee round 3: read paper.pdf\n",
+            ])
 
     def test_fixed_prompt_is_appended_to_configured_command(self):
         commands = AgentCommands(

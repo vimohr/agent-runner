@@ -87,7 +87,7 @@ class AgentRunTests(unittest.TestCase):
             self.assertEqual(run.call_args.args[0], ["/usr/sbin/sendmail", "-t", "-i"])
             message = run.call_args.kwargs["input"].decode()
             self.assertIn("To: reader@example.com", message)
-            self.assertIn("The supervisor marked the paper READY.", message)
+            self.assertIn("the external reviewer accepted it.", message)
             self.assertIn(str(folder / "paper.pdf"), message)
 
     def test_sendmail_failure_is_reported(self):
@@ -122,7 +122,7 @@ class AgentRunTests(unittest.TestCase):
                  "reader@example.com"],
             )
             self.assertIn(
-                b"The supervisor marked the paper READY.",
+                b"the external reviewer accepted it.",
                 run.call_args.kwargs["input"],
             )
 

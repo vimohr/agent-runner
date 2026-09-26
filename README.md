@@ -61,6 +61,7 @@ For example:
 
 ```json
 {
+  "journal": "",
   "researcher": [
     "codex", "exec", "--model", "gpt-6-astra",
     "--config", "model_reasoning_effort=\"max\"",
@@ -86,7 +87,7 @@ For example:
     "{{reviewer_feedback_instruction}}"
   ],
   "reviewer_prompt": [
-    "You are an independent referee for a Physical Review style journal.",
+    "You are an independent referee for the target journal.",
     "Review {{pdf_path}} and write reviewer-feedback.md with STATUS: ACCEPT, REVISE, or REJECT."
   ]
 }
@@ -98,6 +99,14 @@ placeholders are replaced just before each agent starts:
 - All three prompts: `{{pdf_path}}`
 - Researcher only: `{{task_instruction}}`, `{{feedback_instruction}}`
 - Supervisor only: `{{reviewer_feedback_instruction}}`
+
+Set `"journal"` to a specific title such as `"Physical Review Letters"` to
+target it. Leave the field empty or omit it to use the general
+`Physical Review style journal` target. Before every agent prompt, the runner
+adds an instruction to consult the current official scope, author guidance,
+paper style, and editorial criteria for that exact journal and apply them to
+the work. The general target uses Physical Review family guidance. This
+instruction also applies when you supply custom agent prompts.
 
 Agents are not told the current iteration or the 100-iteration safety limit.
 For compatibility with older project configurations, prompt lines containing

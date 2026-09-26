@@ -15,6 +15,7 @@ class ReviewLoopTests(unittest.TestCase):
             commands = AgentCommands(
                 researcher=("author",), supervisor=("supervisor",),
                 reviewer=("referee",),
+                journal="Physical Review Letters",
                 researcher_prompt="Write {{pdf_path}}.",
                 supervisor_prompt="Review {{pdf_path}}.",
             )
@@ -25,6 +26,10 @@ class ReviewLoopTests(unittest.TestCase):
             def fake_run(command, *, label):
                 role, prompt = command[0], command[-1]
                 calls.append((role, prompt))
+                self.assertTrue(prompt.startswith(
+                    "IMPORTANT — Target journal: Physical Review Letters."
+                ))
+                self.assertIn("Before starting, consult", prompt)
                 if role == "supervisor":
                     self.assertFalse((root / "feedback.md").exists())
                     if (root / "reviewer-feedback.md").exists():

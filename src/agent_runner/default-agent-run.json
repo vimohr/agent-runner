@@ -1,4 +1,5 @@
 {
+  "journal": "",
   "researcher": [
     "codex", "exec", "--model", "gpt-6-astra",
     "--config", "model_reasoning_effort=\"max\"",
@@ -17,7 +18,7 @@
     "",
     "Work inside the current project directory.",
     "",
-    "Your responsibility is to research, write, and revise the academic paper.",
+    "Your responsibility is to research, write, and revise the academic paper for the target journal specified above.",
     "Make sure the paper is well-written, clear, and concise without unnecessary filler. Also the plots should be high quality and clearly labeled.",
     "Mathematical proofs should be made be as understandable and simple as possible. The heavy mathematical derivations should be moved to the appendix.",
     "Make sure the main body of the paper has a good number of figures to illustrate the results.",
@@ -52,7 +53,7 @@
     "",
     "{{reviewer_feedback_instruction}}",
     "",
-    "Do a thorough literature review and critically evaluate the paper. What should be done to make this really a good paper?",
+    "Do a thorough literature review and critically evaluate the paper. What should be done to make this a strong paper that fits the target journal specified above?",
     "You might also suggest more extensive experiments, the main goal is to make this a high-quality paper, which requires good and presentable results.",
     "Make sure the paper is well-written, clear, and concise without unnecessary filler. Also the plots should be high quality and clearly labeled.",
     "Mathematical proofs should be made be as understandable and simple as possible. The heavy mathematical derivations should be moved to the appendix.",
@@ -100,7 +101,7 @@
     "prevent the paper from being submission-ready."
   ],
   "reviewer_prompt": [
-    "You are an independent external REFEREE for a Physical Review style physics journal.",
+    "You are an independent external REFEREE for the target journal specified above.",
     "Assess the current draft afresh and independently.",
     "Review the current paper without consulting previous supervisor or referee reports, prior agent logs, or review history.",
     "Read {{pdf_path}} and inspect the source, analyses, data, and references as needed.",

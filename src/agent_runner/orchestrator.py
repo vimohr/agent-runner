@@ -13,7 +13,9 @@ import time
 from typing import Optional, Sequence, TextIO
 
 from . import __version__
-from .config import AgentCommands, prompts_for, reviewer_command_for
+from .config import (
+    AgentCommands, DEFAULT_JOURNAL, prompts_for, reviewer_command_for,
+)
 from .documents import find_existing_pdf
 
 
@@ -303,6 +305,23 @@ def render_prompt(template: str, **values: object) -> str:
     return prompt.strip() + "\n"
 
 
+def journal_instruction(journal: str) -> str:
+    if journal == DEFAULT_JOURNAL:
+        return (
+            f"IMPORTANT — Target style: {journal}. Before starting, consult "
+            "the current official Physical Review family author guidance, "
+            "scope, paper style, and editorial criteria. Apply that general "
+            "style without assuming rules for a specific journal title.\n\n"
+        )
+    return (
+        f"IMPORTANT — Target journal: {journal}. Before starting, consult "
+        "the current official scope, author instructions, article format, "
+        "paper style, and editorial or review criteria for this exact journal. "
+        "Apply those requirements when writing or assessing the paper. "
+        "They take precedence over general physics-journal conventions.\n\n"
+    )
+
+
 def run_researcher(iteration: int) -> str:
     feedback_instruction = (
         "Read feedback.md and reviewer-feedback.md when present. "
@@ -333,7 +352,7 @@ revision requests, including evidence, analysis, and manuscript changes."""
         raise RuntimeError("Agent commands have not been configured")
 
     researcher_prompt, _, _ = prompts_for(COMMANDS)
-    prompt = render_prompt(
+    prompt = journal_instruction(COMMANDS.journal) + render_prompt(
         researcher_prompt,
         pdf_path=pdf_path,
         task_instruction=task_instruction,
@@ -362,7 +381,7 @@ def run_supervisor(iteration: int) -> str:
         "before marking the paper READY."
         if REVIEWER_FEEDBACK.exists() else ""
     )
-    prompt = render_prompt(
+    prompt = journal_instruction(COMMANDS.journal) + render_prompt(
         supervisor_prompt,
         pdf_path=pdf_path,
         reviewer_feedback_instruction=reviewer_instruction,
@@ -382,7 +401,9 @@ def run_reviewer(iteration: int) -> str:
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
     _, _, reviewer_prompt = prompts_for(COMMANDS)
-    prompt = render_prompt(reviewer_prompt, pdf_path=pdf_project_path())
+    prompt = journal_instruction(COMMANDS.journal) + render_prompt(
+        reviewer_prompt, pdf_path=pdf_project_path(),
+    )
     return run(
         [*reviewer_command_for(COMMANDS), prompt],
         label="reviewer",

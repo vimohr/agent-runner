@@ -10,6 +10,7 @@ from typing import Mapping, Optional, Sequence
 
 CONFIG_FILENAME = "agent-run.json"
 DEFAULT_CONFIG_FILENAME = "default-agent-run.json"
+DEFAULT_JOURNAL = "Physical Review style journal"
 LEGACY_RESEARCHER_COMMIT_INSTRUCTION = (
     "7. When your work for this iteration is complete, commit all "
     "paper-related changes to Git with a descriptive commit message. "
@@ -37,6 +38,18 @@ class AgentCommands:
     supervisor_prompt: Optional[str] = None
     reviewer: Optional[tuple[str, ...]] = None
     reviewer_prompt: Optional[str] = None
+    journal: str = DEFAULT_JOURNAL
+
+
+def _parse_journal(value: object) -> str:
+    if value is None:
+        return DEFAULT_JOURNAL
+    if not isinstance(value, str):
+        raise ConfigurationError("'journal' must be a string")
+    journal = value.strip()
+    if any(ord(character) < 32 for character in journal):
+        raise ConfigurationError("'journal' must be a single line")
+    return journal or DEFAULT_JOURNAL
 
 
 def _parse_command(name: str, value: object) -> tuple[str, ...]:
@@ -142,6 +155,7 @@ def load_agent_commands(folder: Path) -> AgentCommands:
             "reviewer_prompt",
             contents.get("reviewer_prompt", default_reviewer_prompt),
         ),
+        journal=_parse_journal(contents.get("journal")),
     )
 
 

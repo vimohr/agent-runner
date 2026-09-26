@@ -85,7 +85,7 @@ class ConfigurationTests(unittest.TestCase):
             )
             self.assertEqual(
                 git("log", "-1", "--format=%s"),
-                "Researcher iteration 2: update paper",
+                "Researcher: update paper",
             )
             self.assertEqual(
                 set(git("diff", "--cached", "--name-only").splitlines()),
@@ -138,7 +138,7 @@ class ConfigurationTests(unittest.TestCase):
             self.assertEqual(commands.researcher[:2], ("codex", "exec"))
             self.assertEqual(commands.supervisor[0], "claude")
             self.assertEqual(commands.reviewer[:2], ("codex", "exec"))
-            self.assertIn("{{iteration}}", commands.researcher_prompt)
+            self.assertNotIn("{{iteration}}", commands.researcher_prompt)
             self.assertIn("{{pdf_path}}", commands.supervisor_prompt)
             self.assertIn("Physical Review", commands.reviewer_prompt)
             self.assertNotIn("commit", commands.researcher_prompt.lower())
@@ -196,7 +196,10 @@ class ConfigurationTests(unittest.TestCase):
                     "Research pass {{iteration}}",
                     "Write {{pdf_path}}. {{task_instruction}}",
                 ],
-                "supervisor_prompt": "Review {{pdf_path}} on pass {{iteration}}",
+                "supervisor_prompt": [
+                    "Review {{pdf_path}}",
+                    "This is pass {{iteration}}",
+                ],
             }))
             commands = load_agent_commands(folder)
             root = folder
@@ -207,7 +210,7 @@ class ConfigurationTests(unittest.TestCase):
                     patch.object(orchestrator, "run", return_value="") as run:
                 orchestrator.run_researcher(4)
                 researcher_prompt = run.call_args.args[0][-1]
-                self.assertIn("Research pass 4", researcher_prompt)
+                self.assertNotIn("Research pass", researcher_prompt)
                 self.assertIn("Write paper.pdf", researcher_prompt)
                 self.assertIn("Read TASK.md", researcher_prompt)
 
@@ -215,7 +218,7 @@ class ConfigurationTests(unittest.TestCase):
                 supervisor_prompt = run.call_args.args[0][-1]
                 self.assertEqual(
                     supervisor_prompt,
-                    "Review paper.pdf on pass 5\n",
+                    "Review paper.pdf\n",
                 )
 
     def test_invalid_command_is_rejected(self):
@@ -246,7 +249,10 @@ class ConfigurationTests(unittest.TestCase):
                 "researcher": ["author"],
                 "supervisor": ["supervisor"],
                 "reviewer": ["external-referee", "--strict"],
-                "reviewer_prompt": "Referee round {{iteration}}: read {{pdf_path}}",
+                "reviewer_prompt": [
+                    "Referee round {{iteration}}",
+                    "Read {{pdf_path}}",
+                ],
             }))
             commands = load_agent_commands(folder)
             with patch.object(orchestrator, "COMMANDS", commands), \
@@ -255,7 +261,7 @@ class ConfigurationTests(unittest.TestCase):
                     patch.object(orchestrator, "run", return_value="") as run:
                 orchestrator.run_reviewer(3)
             self.assertEqual(run.call_args.args[0], [
-                "external-referee", "--strict", "Referee round 3: read paper.pdf\n",
+                "external-referee", "--strict", "Read paper.pdf\n",
             ])
 
     def test_fixed_prompt_is_appended_to_configured_command(self):
@@ -268,7 +274,8 @@ class ConfigurationTests(unittest.TestCase):
             orchestrator.run_researcher(3)
             command = run.call_args.args[0]
             self.assertEqual(command[:-1], list(commands.researcher))
-            self.assertIn("This is iteration 3.", command[-1])
+            self.assertNotIn("iteration", command[-1].lower())
+            self.assertIn("paper.pdf", command[-1])
 
     def test_recursive_main_pdf_is_fallback_and_paper_pdf_has_priority(self):
         with tempfile.TemporaryDirectory() as temporary:

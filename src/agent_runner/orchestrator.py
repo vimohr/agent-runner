@@ -256,7 +256,7 @@ def commit_researcher_changes(iteration: int) -> None:
     subprocess.run(
         [
             "git", "commit", "--only",
-            "-m", f"Researcher iteration {iteration}: update paper",
+            "-m", "Researcher: update paper",
             "--", *staged_paths,
         ],
         cwd=ROOT,
@@ -293,7 +293,11 @@ def validate_reviewer_feedback() -> str:
 
 def render_prompt(template: str, **values: object) -> str:
     """Replace the documented, deliberately explicit prompt placeholders."""
-    prompt = template
+    # Older project configs may still contain the former iteration placeholder.
+    # Drop those lines so no agent receives an iteration number.
+    prompt = "\n".join(
+        line for line in template.splitlines() if "{{iteration}}" not in line
+    )
     for name, value in values.items():
         prompt = prompt.replace(f"{{{{{name}}}}}", str(value))
     return prompt.strip() + "\n"
@@ -331,7 +335,6 @@ revision requests, including evidence, analysis, and manuscript changes."""
     researcher_prompt, _, _ = prompts_for(COMMANDS)
     prompt = render_prompt(
         researcher_prompt,
-        iteration=iteration,
         pdf_path=pdf_path,
         task_instruction=task_instruction,
         feedback_instruction=feedback_instruction,
@@ -341,7 +344,7 @@ revision requests, including evidence, analysis, and manuscript changes."""
 
     return run(
         [*COMMANDS.researcher, prompt],
-        label=f"researcher iteration {iteration}",
+        label="researcher",
     )
 
 
@@ -361,7 +364,6 @@ def run_supervisor(iteration: int) -> str:
     )
     prompt = render_prompt(
         supervisor_prompt,
-        iteration=iteration,
         pdf_path=pdf_path,
         reviewer_feedback_instruction=reviewer_instruction,
     )
@@ -372,7 +374,7 @@ def run_supervisor(iteration: int) -> str:
         prompt += reviewer_instruction + "\n"
     return run(
         [*COMMANDS.supervisor, prompt],
-        label=f"supervisor iteration {iteration}",
+        label="supervisor",
     )
 
 
@@ -380,12 +382,10 @@ def run_reviewer(iteration: int) -> str:
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
     _, _, reviewer_prompt = prompts_for(COMMANDS)
-    prompt = render_prompt(
-        reviewer_prompt, iteration=iteration, pdf_path=pdf_project_path(),
-    )
+    prompt = render_prompt(reviewer_prompt, pdf_path=pdf_project_path())
     return run(
         [*reviewer_command_for(COMMANDS), prompt],
-        label=f"reviewer round {iteration}",
+        label="reviewer",
     )
 
 

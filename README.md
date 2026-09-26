@@ -76,14 +76,12 @@ For example:
   ],
   "researcher_prompt": [
     "You are the RESEARCHER / AUTHOR.",
-    "This is iteration {{iteration}}.",
     "Write the completed paper to {{pdf_path}}.",
     "{{task_instruction}}",
     "{{feedback_instruction}}"
   ],
   "supervisor_prompt": [
     "You are the SUPERVISOR.",
-    "This is review iteration {{iteration}}.",
     "Critically review {{pdf_path}} and write feedback.md.",
     "{{reviewer_feedback_instruction}}"
   ],
@@ -97,9 +95,15 @@ For example:
 The complete generated file contains the standard prompts. The following
 placeholders are replaced just before each agent starts:
 
-- All three prompts: `{{iteration}}`, `{{pdf_path}}`
+- All three prompts: `{{pdf_path}}`
 - Researcher only: `{{task_instruction}}`, `{{feedback_instruction}}`
 - Supervisor only: `{{reviewer_feedback_instruction}}`
+
+Agents are not told the current iteration or the 100-iteration safety limit.
+For compatibility with older project configurations, prompt lines containing
+the former `{{iteration}}` placeholder are omitted before an agent starts.
+Move any other instructions on those lines to separate lines in your
+`agent-run.json`.
 
 The reviewer command and all prompt fields are optional for compatibility with
 existing configurations. When omitted, the standard reviewer command or prompt
@@ -195,7 +199,7 @@ both agent prompts. A project containing only `TASK.md` creates `paper.pdf` at
 the project root by default.
 
 After each successful researcher run, `agent-run` validates the PDF and commits
-project changes with an iteration-specific Git message. It skips the commit
+project changes with a generic Git message. It skips the commit
 when there are no changes, and excludes `feedback.md`, `reviewer-feedback.md`,
 `agent-run.json`, and `.agent-run` from its commits. The former commit
 instruction is ignored when loading an older generated `agent-run.json`.

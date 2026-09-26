@@ -146,7 +146,8 @@ agent-run path/to/project
 
 Agent output is shown live instead of being held until the command finishes.
 While an agent is running, `agent-run` prints a heartbeat every 30 seconds with
-its role, PID, and elapsed time. The complete output is also appended to
+its role, iteration, PID, and elapsed time. Iteration numbers appear only in
+terminal status messages, not in agent prompts or log labels. The complete output is also appended to
 `.agent-run/agent-run.log` in the project, so a failed or interrupted run can
 be inspected afterward.
 

@@ -23,9 +23,11 @@ class ReviewLoopTests(unittest.TestCase):
             reviewer_decisions = iter(("REJECT", "REVISE", "ACCEPT"))
             calls = []
 
-            def fake_run(command, *, label):
+            def fake_run(command, *, label, terminal_label):
                 role, prompt = command[0], command[-1]
                 calls.append((role, prompt))
+                self.assertIn("iteration", terminal_label)
+                self.assertNotIn("iteration", label)
                 self.assertTrue(prompt.startswith(
                     "IMPORTANT — Target journal: Physical Review Letters."
                 ))

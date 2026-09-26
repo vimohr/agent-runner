@@ -75,6 +75,7 @@ def run(
     cwd: Optional[Path] = None,
     *,
     label: str = "agent",
+    terminal_label: Optional[str] = None,
 ) -> str:
     """Run an agent while teeing its output to the terminal and a log file."""
     working_directory = cwd or ROOT
@@ -82,6 +83,7 @@ def run(
     log_directory.mkdir(exist_ok=True)
     log_path = log_directory / "agent-run.log"
     started = time.monotonic()
+    terminal_label = terminal_label or label
     display_command = shlex.join(cmd[:-1]) + " <prompt>"
 
     process = subprocess.Popen(
@@ -96,7 +98,7 @@ def run(
     )
 
     print(
-        f"[{label}] started PID {process.pid}; live output follows. "
+        f"[{terminal_label}] started PID {process.pid}; live output follows. "
         f"Log: {log_path}"
     )
 
@@ -148,12 +150,12 @@ def run(
                     and process.poll() is None
                 ):
                     timed_out = True
-                    message = (
-                        f"[{label}] timed out after "
-                        f"{_elapsed(now - started)}; stopping PID {process.pid}."
+                    detail = (
+                        f"timed out after {_elapsed(now - started)}; "
+                        f"stopping PID {process.pid}."
                     )
-                    print(message, file=sys.stderr, flush=True)
-                    log.write(message + "\n")
+                    print(f"[{terminal_label}] {detail}", file=sys.stderr, flush=True)
+                    log.write(f"[{label}] {detail}\n")
                     _stop_process(process)
 
                 if (
@@ -161,12 +163,12 @@ def run(
                     and not timed_out
                     and process.poll() is None
                 ):
-                    message = (
-                        f"[{label}] still running (PID {process.pid}, "
+                    detail = (
+                        f"still running (PID {process.pid}, "
                         f"elapsed {_elapsed(now - started)})."
                     )
-                    print(message, file=sys.stderr, flush=True)
-                    log.write(message + "\n")
+                    print(f"[{terminal_label}] {detail}", file=sys.stderr, flush=True)
+                    log.write(f"[{label}] {detail}\n")
                     next_heartbeat = now + HEARTBEAT_SECONDS
 
                 try:
@@ -184,9 +186,9 @@ def run(
                 if stream_name == "stdout":
                     stdout.append(line)
         except KeyboardInterrupt:
-            message = f"[{label}] interrupted; stopping PID {process.pid}."
-            print(message, file=sys.stderr, flush=True)
-            log.write(message + "\n")
+            detail = f"interrupted; stopping PID {process.pid}."
+            print(f"[{terminal_label}] {detail}", file=sys.stderr, flush=True)
+            log.write(f"[{label}] {detail}\n")
             _stop_process(process)
             raise
 
@@ -205,7 +207,7 @@ def run(
             f"{label} failed with exit code {returncode}. See {log_path}."
         )
 
-    print(f"[{label}] finished successfully in {elapsed}.")
+    print(f"[{terminal_label}] finished successfully in {elapsed}.")
     return "".join(stdout)
 
 
@@ -364,6 +366,7 @@ revision requests, including evidence, analysis, and manuscript changes."""
     return run(
         [*COMMANDS.researcher, prompt],
         label="researcher",
+        terminal_label=f"researcher iteration {iteration}",
     )
 
 
@@ -394,6 +397,7 @@ def run_supervisor(iteration: int) -> str:
     return run(
         [*COMMANDS.supervisor, prompt],
         label="supervisor",
+        terminal_label=f"supervisor iteration {iteration}",
     )
 
 
@@ -407,6 +411,7 @@ def run_reviewer(iteration: int) -> str:
     return run(
         [*reviewer_command_for(COMMANDS), prompt],
         label="reviewer",
+        terminal_label=f"reviewer iteration {iteration}",
     )
 
 

@@ -131,6 +131,29 @@ class ConfigurationTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "exceeded"):
                     orchestrator.run(command, label="slow agent")
 
+    def test_heartbeat_shows_iteration_only_in_terminal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            command = [
+                sys.executable, "-c", "import time; time.sleep(0.35)", "prompt",
+            ]
+            with patch.object(orchestrator, "ROOT", root), \
+                    patch.object(orchestrator, "AGENT_TIMEOUT_SECONDS", None), \
+                    patch.object(orchestrator, "HEARTBEAT_SECONDS", 0.05), \
+                    patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                orchestrator.run(
+                    command, label="researcher",
+                    terminal_label="researcher iteration 4",
+                )
+
+            self.assertIn("[researcher iteration 4] still running", stderr.getvalue())
+            self.assertIn("[researcher iteration 4] started", stdout.getvalue())
+            log = (root / ".agent-run" / "agent-run.log").read_text()
+            self.assertIn("[researcher] still running", log)
+            self.assertNotIn("iteration 4", log)
+
     def test_example_is_valid_configuration(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)

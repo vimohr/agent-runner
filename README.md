@@ -144,12 +144,17 @@ Then run:
 agent-run path/to/project
 ```
 
-Agent output is shown live instead of being held until the command finishes.
+By default, the terminal shows agent start, heartbeat, and completion messages
+without printing every file read, tool result, or generated diff. If an agent
+fails, the terminal shows a short excerpt of its recent error output. The full
+stdout and stderr are always appended to `.agent-run/agent-run.log` in the
+project. Use `--verbose` to stream the full agent output to the terminal as
+well.
+
 While an agent is running, `agent-run` prints a heartbeat every 30 seconds with
 its role, iteration, PID, and elapsed time. Iteration numbers appear only in
-terminal status messages, not in agent prompts or log labels. The complete output is also appended to
-`.agent-run/agent-run.log` in the project, so a failed or interrupted run can
-be inspected afterward.
+terminal status messages, not in agent prompts or log labels. The log remains
+available after a failed or interrupted run.
 
 To change the heartbeat interval or put a time limit on each individual agent:
 
@@ -157,11 +162,18 @@ To change the heartbeat interval or put a time limit on each individual agent:
 agent-run --heartbeat 10 --timeout 3600 path/to/project
 ```
 
-To receive an email when the external reviewer accepts the paper:
+To receive an email when the external reviewer accepts the paper or the running
+loop stops with an error:
 
 ```sh
 agent-run . --email="you@example.com"
 ```
+
+Success and failure emails have distinct subjects. A failure email includes
+the error, project path, PDF path, and agent log path. Interrupting the loop
+with Ctrl-C also sends a failure email. The runner checks mail delivery before
+starting the loop; it cannot notify if the process or host is forcibly killed
+or mail delivery itself is unavailable.
 
 If the cluster provides `mail` or `mailx`, `agent-run` uses it automatically
 when `sendmail` is unavailable. No SMTP settings are needed. You can check
@@ -198,6 +210,12 @@ password unset. Ask the cluster administrator for the relay host and port.
 There is no timeout by default because a legitimate research or compilation
 step may take a long time. Pressing Ctrl-C stops the current agent and its
 child processes cleanly; the log remains available for diagnosis.
+
+If an agent exits because its selected model is temporarily at capacity,
+`agent-run` retries that agent up to three times after 15, 30, and 60 seconds.
+Partial supervisor or reviewer reports are removed before a retry. Other
+failures still stop the run immediately; after the final capacity failure the
+runner reports the error and keeps the project files for a later rerun.
 
 `agent-run` exits without changing anything unless the directory contains
 `paper.pdf` or `main.pdf` anywhere below it, or a top-level `TASK.md`. When

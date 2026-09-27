@@ -1,5 +1,6 @@
 """Researcher, supervisor, and independent referee orchestration loop."""
 
+from collections import deque
 from pathlib import Path
 import os
 import queue
@@ -30,6 +31,12 @@ MAX_ITERATIONS = 100
 COMMANDS: Optional[AgentCommands] = None
 AGENT_TIMEOUT_SECONDS: Optional[float] = None
 HEARTBEAT_SECONDS = 30.0
+STREAM_AGENT_OUTPUT = False
+CAPACITY_RETRY_DELAYS = (15, 30, 60)
+
+
+class ModelCapacityError(RuntimeError):
+    """An agent exited because its selected model was temporarily at capacity."""
 
 
 def _elapsed(seconds: float) -> str:
@@ -77,7 +84,7 @@ def run(
     label: str = "agent",
     terminal_label: Optional[str] = None,
 ) -> str:
-    """Run an agent while teeing its output to the terminal and a log file."""
+    """Run an agent, logging all output and optionally streaming it live."""
     working_directory = cwd or ROOT
     log_directory = ROOT / ".agent-run"
     log_directory.mkdir(exist_ok=True)
@@ -98,7 +105,7 @@ def run(
     )
 
     print(
-        f"[{terminal_label}] started PID {process.pid}; live output follows. "
+        f"[{terminal_label}] started PID {process.pid}. "
         f"Log: {log_path}"
     )
 
@@ -129,6 +136,9 @@ def run(
         reader.start()
 
     stdout: list[str] = []
+    recent_stdout: deque[str] = deque(maxlen=6)
+    recent_stderr: deque[str] = deque(maxlen=6)
+    capacity_error = False
     completed_streams = 0
     next_heartbeat = started + HEARTBEAT_SECONDS
     timed_out = False
@@ -180,9 +190,16 @@ def run(
                     completed_streams += 1
                     continue
 
-                destination = sys.stdout if stream_name == "stdout" else sys.stderr
-                print(line, end="", file=destination, flush=True)
+                if STREAM_AGENT_OUTPUT:
+                    destination = sys.stdout if stream_name == "stdout" else sys.stderr
+                    print(line, end="", file=destination, flush=True)
                 log.write(f"[{stream_name}] {line}")
+                stripped = line.strip()
+                if stripped:
+                    recent = recent_stdout if stream_name == "stdout" else recent_stderr
+                    recent.append(stripped[-300:])
+                if "model is at capacity" in line.lower():
+                    capacity_error = True
                 if stream_name == "stdout":
                     stdout.append(line)
         except KeyboardInterrupt:
@@ -196,6 +213,13 @@ def run(
         elapsed = _elapsed(time.monotonic() - started)
         log.write(f"=== exit {returncode} | elapsed {elapsed} ===\n")
 
+    if (timed_out or returncode != 0) and not STREAM_AGENT_OUTPUT:
+        recent = recent_stderr or recent_stdout
+        if recent:
+            print(f"[{terminal_label}] recent agent output:", file=sys.stderr)
+            for line in recent:
+                print(f"  {line}", file=sys.stderr)
+
     if timed_out:
         raise RuntimeError(
             f"{label} exceeded the {AGENT_TIMEOUT_SECONDS:g}s timeout. "
@@ -203,12 +227,43 @@ def run(
         )
 
     if returncode != 0:
+        if capacity_error:
+            raise ModelCapacityError(
+                f"{label} model was at capacity (exit {returncode}). "
+                f"See {log_path}."
+            )
         raise RuntimeError(
             f"{label} failed with exit code {returncode}. See {log_path}."
         )
 
     print(f"[{terminal_label}] finished successfully in {elapsed}.")
     return "".join(stdout)
+
+
+def run_with_capacity_retry(
+    cmd: Sequence[str], *, label: str, terminal_label: str,
+    result_path: Optional[Path] = None,
+) -> str:
+    attempts = len(CAPACITY_RETRY_DELAYS) + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return run(cmd, label=label, terminal_label=terminal_label)
+        except ModelCapacityError as error:
+            if attempt == attempts:
+                raise RuntimeError(
+                    f"{label} model remained at capacity after {attempts} "
+                    f"attempts. See {ROOT / '.agent-run' / 'agent-run.log'}."
+                ) from error
+            delay = CAPACITY_RETRY_DELAYS[attempt - 1]
+            if result_path is not None:
+                result_path.unlink(missing_ok=True)
+            print(
+                f"[{terminal_label}] model at capacity; retrying in {delay}s "
+                f"(attempt {attempt + 1}/{attempts}).",
+                file=sys.stderr, flush=True,
+            )
+            time.sleep(delay)
+    raise AssertionError("unreachable")
 
 
 def validate_pdf() -> None:
@@ -363,7 +418,7 @@ revision requests, including evidence, analysis, and manuscript changes."""
     if "{{feedback_instruction}}" not in researcher_prompt:
         prompt += feedback_instruction + "\n"
 
-    return run(
+    return run_with_capacity_retry(
         [*COMMANDS.researcher, prompt],
         label="researcher",
         terminal_label=f"researcher iteration {iteration}",
@@ -394,10 +449,11 @@ def run_supervisor(iteration: int) -> str:
         and "{{reviewer_feedback_instruction}}" not in supervisor_prompt
     ):
         prompt += reviewer_instruction + "\n"
-    return run(
+    return run_with_capacity_retry(
         [*COMMANDS.supervisor, prompt],
         label="supervisor",
         terminal_label=f"supervisor iteration {iteration}",
+        result_path=FEEDBACK,
     )
 
 
@@ -408,10 +464,11 @@ def run_reviewer(iteration: int) -> str:
     prompt = journal_instruction(COMMANDS.journal) + render_prompt(
         reviewer_prompt, pdf_path=pdf_project_path(),
     )
-    return run(
+    return run_with_capacity_retry(
         [*reviewer_command_for(COMMANDS), prompt],
         label="reviewer",
         terminal_label=f"reviewer iteration {iteration}",
+        result_path=REVIEWER_FEEDBACK,
     )
 
 
@@ -421,9 +478,10 @@ def main(
     *,
     timeout_seconds: Optional[float] = None,
     heartbeat_seconds: float = 30.0,
+    verbose_output: bool = False,
 ) -> None:
     global ROOT, PAPER, FEEDBACK, REVIEWER_FEEDBACK, COMMANDS
-    global AGENT_TIMEOUT_SECONDS, HEARTBEAT_SECONDS
+    global AGENT_TIMEOUT_SECONDS, HEARTBEAT_SECONDS, STREAM_AGENT_OUTPUT
 
     ROOT = Path(project_root).resolve()
     PAPER = select_pdf(ROOT)
@@ -432,6 +490,7 @@ def main(
     COMMANDS = commands
     AGENT_TIMEOUT_SECONDS = timeout_seconds
     HEARTBEAT_SECONDS = heartbeat_seconds
+    STREAM_AGENT_OUTPUT = verbose_output
 
     for iteration in range(1, MAX_ITERATIONS + 1):
         print(f"\n=== ITERATION {iteration} ===")

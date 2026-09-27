@@ -1,5 +1,6 @@
 import json
 import io
+from email import message_from_bytes
 import subprocess
 import tempfile
 import unittest
@@ -43,6 +44,17 @@ class AgentRunTests(unittest.TestCase):
                     commands.supervisor,
                     ("review-agent", "--model", "reviewer-model"),
                 )
+                self.assertFalse(run.call_args.kwargs["verbose_output"])
+
+    def test_verbose_flag_enables_live_agent_output(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "TASK.md").write_text("Write a paper")
+            self.write_config(folder)
+            with patch.object(cli, "switch_to_agent_branch"), \
+                    patch.object(cli.orchestrator, "main") as run:
+                self.assertEqual(cli.main([str(folder), "--verbose"]), 0)
+            self.assertTrue(run.call_args.kwargs["verbose_output"])
 
     def test_email_is_sent_after_successful_loop(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -59,7 +71,7 @@ class AgentRunTests(unittest.TestCase):
                 run.assert_called_once()
                 send.assert_called_once_with("reader@example.com", folder.resolve())
 
-    def test_email_is_not_sent_when_loop_fails(self):
+    def test_failure_email_is_sent_when_loop_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
             (folder / "TASK.md").write_text("Write a paper")
@@ -67,12 +79,50 @@ class AgentRunTests(unittest.TestCase):
             with patch.object(cli, "switch_to_agent_branch"), \
                     patch.object(cli.orchestrator, "main", side_effect=RuntimeError("failed")), \
                     patch.object(cli, "check_email_delivery"), \
-                    patch.object(cli, "send_completion_email") as send, \
+                    patch.object(cli, "send_completion_email") as complete, \
+                    patch.object(cli, "send_failure_email") as failed, \
                     patch("sys.stderr", io.StringIO()):
                 self.assertEqual(
                     cli.main([str(folder), "--email=reader@example.com"]), 1,
                 )
-                send.assert_not_called()
+                complete.assert_not_called()
+                failed.assert_called_once_with(
+                    "reader@example.com", folder.resolve(), "failed",
+                )
+
+    def test_interruption_sends_failure_email(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "TASK.md").write_text("Write a paper")
+            self.write_config(folder)
+            with patch.object(cli, "switch_to_agent_branch"), \
+                    patch.object(cli.orchestrator, "main", side_effect=KeyboardInterrupt), \
+                    patch.object(cli, "check_email_delivery"), \
+                    patch.object(cli, "send_failure_email") as failed, \
+                    patch("sys.stderr", io.StringIO()):
+                self.assertEqual(
+                    cli.main([str(folder), "--email=reader@example.com"]), 130,
+                )
+            failed.assert_called_once_with(
+                "reader@example.com", folder.resolve(), "interrupted by user",
+            )
+
+    def test_failure_email_error_does_not_hide_runner_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            (folder / "TASK.md").write_text("Write a paper")
+            self.write_config(folder)
+            stderr = io.StringIO()
+            with patch.object(cli, "switch_to_agent_branch"), \
+                    patch.object(cli.orchestrator, "main", side_effect=RuntimeError("agent failed")), \
+                    patch.object(cli, "check_email_delivery"), \
+                    patch.object(cli, "send_failure_email", side_effect=RuntimeError("mail failed")), \
+                    patch("sys.stderr", stderr):
+                self.assertEqual(
+                    cli.main([str(folder), "--email=reader@example.com"]), 1,
+                )
+            self.assertIn("agent failed", stderr.getvalue())
+            self.assertIn("mail failed", stderr.getvalue())
 
     def test_completion_email_uses_sendmail(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -89,6 +139,22 @@ class AgentRunTests(unittest.TestCase):
             self.assertIn("To: reader@example.com", message)
             self.assertIn("the external reviewer accepted it.", message)
             self.assertIn(str(folder / "paper.pdf"), message)
+
+    def test_failure_email_includes_reason_and_log_path(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            with patch.dict(cli.os.environ, {}, clear=True), \
+                    patch.object(cli.shutil, "which", return_value="/usr/sbin/sendmail"), \
+                    patch.object(cli.subprocess, "run") as run:
+                run.return_value.returncode = 0
+                cli.send_failure_email(
+                    "reader@example.com", folder, "researcher model at capacity",
+                )
+            message = message_from_bytes(run.call_args.kwargs["input"])
+            body = message.get_payload(decode=True).decode()
+            self.assertEqual(message["Subject"], f"agent-run stopped: {folder.name}")
+            self.assertIn("researcher model at capacity", body)
+            self.assertIn(str(folder / ".agent-run" / "agent-run.log"), body)
 
     def test_sendmail_failure_is_reported(self):
         with tempfile.TemporaryDirectory() as temporary:

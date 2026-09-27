@@ -90,7 +90,7 @@ def local_mail_transport() -> tuple[str, str]:
     if standard_path.is_file():
         return "sendmail", str(standard_path)
     raise RuntimeError(
-        "cannot send completion email: configure AGENT_RUN_SMTP_HOST "
+        "cannot send notification email: configure AGENT_RUN_SMTP_HOST "
         "or install sendmail, mail, or mailx"
     )
 
@@ -101,17 +101,41 @@ def check_email_delivery() -> None:
 
 
 def send_completion_email(recipient: str, folder: Path) -> None:
+    send_notification_email(
+        recipient,
+        subject=f"agent-run completed: {folder.name}",
+        body=(
+            "The supervisor marked the paper READY and the external reviewer accepted it.\n\n"
+            f"Project: {folder}\n"
+            f"PDF: {orchestrator.select_pdf(folder)}\n"
+        ),
+    )
+
+
+def send_failure_email(recipient: str, folder: Path, reason: str) -> None:
+    send_notification_email(
+        recipient,
+        subject=f"agent-run stopped: {folder.name}",
+        body=(
+            "The paper loop stopped before reviewer acceptance.\n\n"
+            f"Reason: {reason}\n"
+            f"Project: {folder}\n"
+            f"PDF: {orchestrator.select_pdf(folder)}\n"
+            f"Log: {folder / '.agent-run' / 'agent-run.log'}\n"
+        ),
+    )
+
+
+def send_notification_email(
+    recipient: str, *, subject: str, body: str,
+) -> None:
     settings = smtp_settings()
 
     message = EmailMessage()
     message["From"] = settings[3] if settings else f"agent-run@{socket.getfqdn()}"
     message["To"] = recipient
-    message["Subject"] = f"agent-run completed: {folder.name}"
-    message.set_content(
-        "The supervisor marked the paper READY and the external reviewer accepted it.\n\n"
-        f"Project: {folder}\n"
-        f"PDF: {orchestrator.select_pdf(folder)}\n"
-    )
+    message["Subject"] = subject
+    message.set_content(body)
     if settings:
         host, port, security, _, username, password = settings
         try:
@@ -123,7 +147,7 @@ def send_completion_email(recipient: str, folder: Path) -> None:
                     smtp.login(username, password)
                 smtp.send_message(message)
         except (OSError, smtplib.SMTPException) as error:
-            raise RuntimeError(f"completion email failed: {error}") from error
+            raise RuntimeError(f"notification email failed: {error}") from error
         return
 
     transport, command = local_mail_transport()
@@ -139,11 +163,11 @@ def send_completion_email(recipient: str, folder: Path) -> None:
             capture_output=True, check=False, timeout=30,
         )
     except subprocess.TimeoutExpired as error:
-        raise RuntimeError("completion email timed out after 30 seconds") from error
+        raise RuntimeError("notification email timed out after 30 seconds") from error
     if result.returncode != 0:
         detail = result.stderr.decode(errors="replace").strip()
         raise RuntimeError(
-            f"completion email failed ({transport} exit {result.returncode})"
+            f"notification email failed ({transport} exit {result.returncode})"
             + (f": {detail}" if detail else "")
         )
 
@@ -195,7 +219,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("folder", type=Path)
     parser.add_argument(
         "--email", type=email_address, metavar="ADDRESS",
-        help="email ADDRESS when the reviewer accepts the paper",
+        help="email ADDRESS when the loop ends in acceptance or stops with an error",
     )
     parser.add_argument(
         "--timeout",
@@ -209,6 +233,10 @@ def build_parser() -> argparse.ArgumentParser:
         default=30.0,
         metavar="SECONDS",
         help="interval for running-agent status messages (default: 30)",
+    )
+    parser.add_argument(
+        "--verbose", action="store_true",
+        help="show all agent output live instead of only status and errors",
     )
     parser.add_argument(
         "--version",
@@ -260,12 +288,29 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         if args.email:
             check_email_delivery()
         switch_to_agent_branch(folder)
-        orchestrator.main(
-            folder,
-            commands,
-            timeout_seconds=args.timeout,
-            heartbeat_seconds=args.heartbeat,
-        )
+        try:
+            orchestrator.main(
+                folder,
+                commands,
+                timeout_seconds=args.timeout,
+                heartbeat_seconds=args.heartbeat,
+                verbose_output=args.verbose,
+            )
+        except (Exception, KeyboardInterrupt) as error:
+            if args.email:
+                reason = (
+                    "interrupted by user" if isinstance(error, KeyboardInterrupt)
+                    else str(error).strip() or type(error).__name__
+                )
+                try:
+                    send_failure_email(args.email, folder, reason)
+                    print(f"Failure email sent to {args.email}.")
+                except Exception as notification_error:
+                    print(
+                        f"agent-run: could not send failure email: "
+                        f"{notification_error}", file=sys.stderr,
+                    )
+            raise
         if args.email:
             send_completion_email(args.email, folder)
             print(f"Completion email sent to {args.email}.")
@@ -283,5 +328,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     except RuntimeError as error:
         print(f"agent-run: {error}", file=sys.stderr)
         return 1
+    except KeyboardInterrupt:
+        print("agent-run: interrupted by user", file=sys.stderr)
+        return 130
 
     return 0

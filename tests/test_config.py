@@ -107,6 +107,7 @@ class ConfigurationTests(unittest.TestCase):
             with patch.object(orchestrator, "ROOT", root), \
                     patch.object(orchestrator, "AGENT_TIMEOUT_SECONDS", None), \
                     patch.object(orchestrator, "HEARTBEAT_SECONDS", 30), \
+                    patch.object(orchestrator, "STREAM_AGENT_OUTPUT", True), \
                     patch("sys.stdout", stdout), patch("sys.stderr", stderr):
                 result = orchestrator.run(command, label="test agent")
 
@@ -119,6 +120,29 @@ class ConfigurationTests(unittest.TestCase):
             self.assertIn("[stderr] visible err", log)
             self.assertNotIn("test prompt", log)
 
+    def test_quiet_output_keeps_full_log_and_shows_short_error(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            command = [
+                sys.executable, "-c",
+                "import sys; [print(f'detail {i}') for i in range(20)]; print('fatal error', file=sys.stderr); sys.exit(1)",
+                "prompt",
+            ]
+            with patch.object(orchestrator, "ROOT", root), \
+                    patch.object(orchestrator, "AGENT_TIMEOUT_SECONDS", None), \
+                    patch.object(orchestrator, "STREAM_AGENT_OUTPUT", False), \
+                    patch("sys.stdout", stdout), patch("sys.stderr", stderr):
+                with self.assertRaisesRegex(RuntimeError, "failed with exit code 1"):
+                    orchestrator.run(command, label="researcher")
+            self.assertNotIn("detail 19", stdout.getvalue())
+            self.assertNotIn("detail 19", stderr.getvalue())
+            self.assertIn("fatal error", stderr.getvalue())
+            log = (root / ".agent-run" / "agent-run.log").read_text()
+            self.assertIn("detail 0", log)
+            self.assertIn("detail 19", log)
+
     def test_run_timeout_stops_agent(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -130,6 +154,58 @@ class ConfigurationTests(unittest.TestCase):
                     patch("sys.stderr", io.StringIO()):
                 with self.assertRaisesRegex(RuntimeError, "exceeded"):
                     orchestrator.run(command, label="slow agent")
+
+    def test_model_capacity_exit_is_recognized(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            command = [
+                sys.executable, "-c",
+                "import sys; print('ERROR: Selected model is at capacity. Please try a different model.', file=sys.stderr); sys.exit(1)",
+                "prompt",
+            ]
+            with patch.object(orchestrator, "ROOT", root), \
+                    patch.object(orchestrator, "AGENT_TIMEOUT_SECONDS", None), \
+                    patch("sys.stdout", io.StringIO()), \
+                    patch("sys.stderr", io.StringIO()):
+                with self.assertRaises(orchestrator.ModelCapacityError):
+                    orchestrator.run(command, label="researcher")
+
+    def test_capacity_retry_clears_partial_report(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            report = root / "feedback.md"
+            calls = []
+
+            def fake_run(command, *, label, terminal_label):
+                calls.append(command)
+                if len(calls) == 1:
+                    report.write_text("partial review")
+                    raise orchestrator.ModelCapacityError("model is at capacity")
+                self.assertFalse(report.exists())
+                return "completed"
+
+            with patch.object(orchestrator, "CAPACITY_RETRY_DELAYS", (15,)), \
+                    patch.object(orchestrator, "run", side_effect=fake_run), \
+                    patch.object(orchestrator.time, "sleep") as sleep, \
+                    patch("sys.stderr", io.StringIO()):
+                result = orchestrator.run_with_capacity_retry(
+                    ["agent", "prompt"], label="supervisor",
+                    terminal_label="supervisor iteration 2", result_path=report,
+                )
+            self.assertEqual(result, "completed")
+            self.assertEqual(len(calls), 2)
+            sleep.assert_called_once_with(15)
+
+    def test_non_capacity_failure_is_not_retried(self):
+        with patch.object(orchestrator, "run", side_effect=RuntimeError("fatal")) as run, \
+                patch.object(orchestrator.time, "sleep") as sleep:
+            with self.assertRaisesRegex(RuntimeError, "fatal"):
+                orchestrator.run_with_capacity_retry(
+                    ["agent", "prompt"], label="researcher",
+                    terminal_label="researcher iteration 1",
+                )
+        run.assert_called_once()
+        sleep.assert_not_called()
 
     def test_heartbeat_shows_iteration_only_in_terminal(self):
         with tempfile.TemporaryDirectory() as temporary:

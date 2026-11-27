@@ -14,10 +14,11 @@ import time
 from typing import Optional, Sequence, TextIO
 
 from . import __version__
+from .checkpoint import load_checkpoint, project_checkpoint, save_checkpoint
 from .config import (
-    AgentCommands, DEFAULT_JOURNAL, prompts_for, reviewer_command_for,
+    AgentCommands, DEFAULT_JOURNAL, prompt_for, reviewer_command_for,
 )
-from .documents import find_existing_pdf
+from .documents import find_existing_pdf, find_task
 
 
 ROOT = Path.cwd()
@@ -275,7 +276,7 @@ def validate_pdf() -> None:
         raise RuntimeError(f"{pdf_path} appears invalid or empty")
 
 
-def commit_researcher_changes(iteration: int) -> None:
+def commit_researcher_changes(iteration: int, *, investigating: bool = False) -> None:
     """Commit project changes while keeping runner and reviewer files out."""
     def researcher_paths(*git_args: str) -> list[str]:
         result = subprocess.run(
@@ -312,10 +313,11 @@ def commit_researcher_changes(iteration: int) -> None:
     if changes.returncode != 1:
         raise RuntimeError("Could not inspect staged researcher changes")
 
+    subject = "update investigation" if investigating else "update paper"
     subprocess.run(
         [
             "git", "commit", "--only",
-            "-m", "Researcher: update paper",
+            "-m", f"Researcher: {subject}",
             "--", *staged_paths,
         ],
         cwd=ROOT,
@@ -340,10 +342,6 @@ def validate_decision(path: Path, role: str, statuses: set[str]) -> str:
     return match.group(1)
 
 
-def validate_feedback() -> str:
-    return validate_decision(FEEDBACK, "Supervisor", {"READY", "REVISE"})
-
-
 def validate_reviewer_feedback() -> str:
     return validate_decision(
         REVIEWER_FEEDBACK, "Reviewer", {"ACCEPT", "REVISE", "REJECT"}
@@ -364,6 +362,15 @@ def render_prompt(template: str, **values: object) -> str:
 
 def journal_instruction(journal: str) -> str:
     if journal == DEFAULT_JOURNAL:
+        task = find_task(ROOT)
+        if task:
+            return (
+                f"Use the project brief in {task.name} to determine the paper's "
+                "audience and disciplinary conventions. If it names a target journal, "
+                "consult its current official guidance.\n\n"
+            )
+        journal = "Physical Review style journal"
+    if journal == "Physical Review style journal":
         return (
             f"IMPORTANT — Target style: {journal}. Before starting, consult "
             "the current official Physical Review family author guidance, "
@@ -379,16 +386,33 @@ def journal_instruction(journal: str) -> str:
     )
 
 
-def run_researcher(iteration: int) -> str:
+def project_prompt(template: str, *, investigating: bool, **instructions: str) -> str:
+    task = find_task(ROOT)
+    if investigating and task is None:
+        raise RuntimeError("Restore TASK.md or task.md to resume the investigation.")
+    instructions["task_instruction"] = (
+        f"Read {task.name} and use it as the project brief." if task else ""
+    )
+    if not investigating and task and (ROOT / "research.md").is_file():
+        instructions["task_instruction"] += (
+            " Use research.md and its supporting evidence to write or assess the paper."
+        )
+    # Older or customized templates can omit placeholders. Keep the handoff
+    # visible to both roles in that case.
+    missing = [
+        value for key, value in instructions.items()
+        if value and "{{" + key + "}}" not in template
+    ]
+    return render_prompt(
+        "\n".join([*missing, template]), pdf_path=pdf_project_path(), **instructions,
+    )
+
+
+def run_researcher(iteration: int, *, investigating: bool = False) -> str:
     feedback_instruction = (
         "Read feedback.md and reviewer-feedback.md when present. "
         "Supervisor feedback takes priority if the two conflict."
     )
-    task_instruction = ""
-
-    if (ROOT / "TASK.md").exists():
-        task_instruction = "Read TASK.md and use it as the project brief."
-
     if FEEDBACK.exists():
         feedback_instruction += """
 
@@ -400,59 +424,54 @@ Address MINOR issues when appropriate."""
     if REVIEWER_FEEDBACK.exists():
         feedback_instruction += """
 
-Read reviewer-feedback.md carefully. Address the referee's rejection or
-revision requests, including evidence, analysis, and manuscript changes."""
-
-    pdf_path = pdf_project_path()
+Read reviewer-feedback.md carefully. Address outstanding referee requests
+that apply to your current phase of work."""
 
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
 
-    researcher_prompt, _, _ = prompts_for(COMMANDS)
-    prompt = journal_instruction(COMMANDS.journal) + render_prompt(
-        researcher_prompt,
-        pdf_path=pdf_path,
-        task_instruction=task_instruction,
+    name = "investigation_prompt" if investigating else "researcher_prompt"
+    prompt = project_prompt(
+        prompt_for(COMMANDS, name), investigating=investigating,
         feedback_instruction=feedback_instruction,
     )
-    if "{{feedback_instruction}}" not in researcher_prompt:
-        prompt += feedback_instruction + "\n"
+    label = "researcher (investigation)" if investigating else "researcher"
+    if not investigating:
+        prompt = journal_instruction(COMMANDS.journal) + prompt
 
     return run_with_capacity_retry(
         [*COMMANDS.researcher, prompt],
-        label="researcher",
-        terminal_label=f"researcher iteration {iteration}",
+        label=label, terminal_label=f"{label} iteration {iteration}",
     )
 
 
-def run_supervisor(iteration: int) -> str:
-    pdf_path = pdf_project_path()
-
+def run_supervisor(iteration: int, *, investigating: bool = False) -> str:
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
 
-    _, supervisor_prompt, _ = prompts_for(COMMANDS)
     reviewer_instruction = (
-        "Read reviewer-feedback.md as historical context: it explains why an "
-        "earlier draft was rejected or sent for revision. Independently assess "
-        "the current draft and verify that its substantive concerns are resolved "
-        "before marking the paper READY."
+        "Read reviewer-feedback.md as historical context. It may explain why an "
+        "earlier draft was returned. Verify that the "
+        "current evidence addresses the referee's substantive concerns."
         if REVIEWER_FEEDBACK.exists() else ""
     )
-    prompt = journal_instruction(COMMANDS.journal) + render_prompt(
-        supervisor_prompt,
-        pdf_path=pdf_path,
+    name = "investigation_supervisor_prompt" if investigating else "supervisor_prompt"
+    prompt = project_prompt(
+        prompt_for(COMMANDS, name), investigating=investigating,
         reviewer_feedback_instruction=reviewer_instruction,
     )
-    if (
-        reviewer_instruction
-        and "{{reviewer_feedback_instruction}}" not in supervisor_prompt
-    ):
-        prompt += reviewer_instruction + "\n"
+    label = "supervisor (investigation)" if investigating else "supervisor"
+    if not investigating:
+        prompt = journal_instruction(COMMANDS.journal) + prompt
+        if find_task(ROOT):
+            prompt += (
+                "An additional decision is available for this task. If a scientific "
+                "gap requires further investigation, specify the work in feedback.md "
+                "and end with STATUS: RESEARCH. Use REVISE for manuscript changes.\n"
+            )
     return run_with_capacity_retry(
         [*COMMANDS.supervisor, prompt],
-        label="supervisor",
-        terminal_label=f"supervisor iteration {iteration}",
+        label=label, terminal_label=f"{label} iteration {iteration}",
         result_path=FEEDBACK,
     )
 
@@ -460,7 +479,7 @@ def run_supervisor(iteration: int) -> str:
 def run_reviewer(iteration: int) -> str:
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
-    _, _, reviewer_prompt = prompts_for(COMMANDS)
+    reviewer_prompt = prompt_for(COMMANDS, "reviewer_prompt")
     prompt = journal_instruction(COMMANDS.journal) + render_prompt(
         reviewer_prompt, pdf_path=pdf_project_path(),
     )
@@ -470,6 +489,53 @@ def run_reviewer(iteration: int) -> str:
         terminal_label=f"reviewer iteration {iteration}",
         result_path=REVIEWER_FEEDBACK,
     )
+
+
+def validate_research() -> None:
+    record = ROOT / "research.md"
+    if not record.is_file() or not record.read_text(encoding="utf-8").strip():
+        raise RuntimeError("Researcher must record the investigation in research.md")
+
+
+def advance(step: str, iteration: int) -> str:
+    """Run one turn. Only a validated result advances the checkpoint."""
+    if step == "investigate":
+        run_researcher(iteration, investigating=True)
+        validate_research()
+        commit_researcher_changes(iteration, investigating=True)
+        return "assess"
+
+    if step == "assess":
+        validate_research()
+        FEEDBACK.unlink(missing_ok=True)
+        run_supervisor(iteration, investigating=True)
+        decision = validate_decision(FEEDBACK, "Supervisor", {"CONTINUE", "WRITE"})
+        print(f"Research supervisor: {decision}")
+        return "write" if decision == "WRITE" else "investigate"
+
+    if step == "write":
+        run_researcher(iteration)
+        validate_pdf()
+        commit_researcher_changes(iteration)
+        return "supervise"
+
+    validate_pdf()
+    # A fresh supervisor or referee must never inherit its own partial report.
+    FEEDBACK.unlink(missing_ok=True)
+    if step == "supervise":
+        run_supervisor(iteration)
+        transitions = {"READY": "review", "REVISE": "write"}
+        if find_task(ROOT):
+            transitions["RESEARCH"] = "investigate"
+        decision = validate_decision(FEEDBACK, "Supervisor", set(transitions))
+        print(f"Manuscript supervisor: {decision}")
+        return transitions[decision]
+
+    REVIEWER_FEEDBACK.unlink(missing_ok=True)
+    run_reviewer(iteration)
+    decision = validate_reviewer_feedback()
+    print(f"Independent reviewer: {decision}")
+    return "accepted" if decision == "ACCEPT" else "write"
 
 
 def main(
@@ -484,7 +550,6 @@ def main(
     global AGENT_TIMEOUT_SECONDS, HEARTBEAT_SECONDS, STREAM_AGENT_OUTPUT
 
     ROOT = Path(project_root).resolve()
-    PAPER = select_pdf(ROOT)
     FEEDBACK = ROOT / "feedback.md"
     REVIEWER_FEEDBACK = ROOT / "reviewer-feedback.md"
     COMMANDS = commands
@@ -492,40 +557,28 @@ def main(
     HEARTBEAT_SECONDS = heartbeat_seconds
     STREAM_AGENT_OUTPUT = verbose_output
 
-    for iteration in range(1, MAX_ITERATIONS + 1):
-        print(f"\n=== ITERATION {iteration} ===")
+    with project_checkpoint(ROOT) as checkpoint:
+        saved = load_checkpoint(checkpoint)
+        if saved is None:
+            step = "investigate" if find_task(ROOT) else "write"
+            PAPER = select_pdf(ROOT)
+            save_checkpoint(checkpoint, step, PAPER.relative_to(ROOT))
+        else:
+            step, relative_pdf = saved
+            PAPER = ROOT / relative_pdf
+            print(f"Resuming {step} for {relative_pdf}.")
 
-        print("Running researcher...")
-        run_researcher(iteration)
-
-        # The next supervisor must not see its own previous report.
-        FEEDBACK.unlink(missing_ok=True)
-
-        validate_pdf()
-        print(f"{pdf_project_path()} validated.")
-        commit_researcher_changes(iteration)
-
-        print("Running supervisor...")
-        run_supervisor(iteration)
-
-        feedback = validate_feedback()
-        print("feedback.md validated.")
-
-        if feedback == "REVISE":
-            print("Supervisor requested another revision.")
-            continue
-
-        print("Supervisor marked paper READY. Running independent reviewer...")
-        # The external reviewer judges this draft without previous reports.
-        FEEDBACK.unlink(missing_ok=True)
-        REVIEWER_FEEDBACK.unlink(missing_ok=True)
-        run_reviewer(iteration)
-        decision = validate_reviewer_feedback()
-        print("reviewer-feedback.md validated.")
-        if decision == "ACCEPT":
-            print("\nReviewer accepted the paper.")
-            return
-        print(f"Reviewer requested another revision ({decision}).")
+        iteration = 1
+        while iteration <= MAX_ITERATIONS:
+            print(f"\n=== {step} (iteration {iteration}) ===")
+            step = advance(step, iteration)
+            if step == "accepted":
+                checkpoint.unlink()
+                print("\nReviewer accepted the paper.")
+                return
+            save_checkpoint(checkpoint, step, PAPER.relative_to(ROOT))
+            if step in ("investigate", "write"):
+                iteration += 1
 
     raise RuntimeError(
         f"Maximum iterations ({MAX_ITERATIONS}) reached."

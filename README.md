@@ -1,8 +1,9 @@
 # Agent Runner
 
-`agent-run` starts a researcher, supervisor, and independent reviewer loop in a project directory.
-It only acts on directories containing `paper.pdf` or `main.pdf` anywhere in
-their directory tree, or a top-level `TASK.md`.
+`agent-run` runs a researcher, supervisor, and independent paper reviewer in a
+project directory. Start a new investigation by writing the question in a
+top-level `TASK.md` (or `task.md`). A project with only an existing `paper.pdf`
+or `main.pdf` starts at the manuscript stage.
 
 ## Requirements
 
@@ -44,6 +45,33 @@ python3 -m pip install -e .
 ```
 
 ## Usage
+
+For example, a project can start with a single `TASK.md` containing:
+
+> Does the median give a more stable estimate of delivery time than the mean
+> for the routes in deliveries.csv? Check whether the answer depends on route size.
+
+Include any data, constraints, or criteria that matter to your question. A
+theoretical question or literature synthesis can begin with the question alone.
+Run `agent-run path/to/project`. A brief starts a new run in the investigation
+phase even when the directory also contains a manuscript. If both spellings
+exist, `TASK.md` takes precedence.
+
+| Stage | Work and handoff | Decision |
+| --- | --- | --- |
+| Investigation | The researcher reads the brief, carries out research, and records methods, findings, limitations, and links to supporting evidence in `research.md`. The supervisor checks that evidence against the question and writes `feedback.md`. | `CONTINUE` requests specific follow-up. `WRITE` approves the evidence for drafting. A well-supported negative result can qualify. |
+| Manuscript | The researcher writes or revises the editable paper and generates the PDF. The supervisor checks the draft against the evidence. | `REVISE` returns to drafting. In a project with a brief, `RESEARCH` reopens the investigation. `READY` sends the paper for independent review. |
+| Independent review | The referee reads the draft, can inspect the evidence, and writes `reviewer-feedback.md`. | `REVISE` and `REJECT` return to the author and supervisor. `ACCEPT` completes the run. |
+
+Each decision is the final line of the corresponding report, for example
+`STATUS: WRITE`. Each turn launches the configured command in a new process.
+The default commands start fresh conversations. The brief, research record,
+artifacts, draft, and current feedback carry context across turns.
+
+After an interruption, rerun the same command. The runner saves the pending
+turn and selected PDF path in `.agent-run/workflow.json`. An interrupted turn
+runs again and can use any work already on disk. Acceptance clears the
+checkpoint, so a later invocation starts a new run.
 
 On the first run for a marked project, `agent-run` creates an `agent-run.json`
 file containing the standard researcher, supervisor, and reviewer commands and prompts.
@@ -96,17 +124,20 @@ For example:
 The complete generated file contains the standard prompts. The following
 placeholders are replaced just before each agent starts:
 
-- All three prompts: `{{pdf_path}}`
-- Researcher only: `{{task_instruction}}`, `{{feedback_instruction}}`
+- All prompts: `{{pdf_path}}`
+- Researcher and supervisor in both phases: `{{task_instruction}}`
+- Researcher only: `{{feedback_instruction}}`
 - Supervisor only: `{{reviewer_feedback_instruction}}`
 
-Set `"journal"` to a specific title such as `"Physical Review Letters"` to
-target it. Leave the field empty or omit it to use the general
-`Physical Review style journal` target. Before every agent prompt, the runner
-adds an instruction to consult the current official scope, author guidance,
-paper style, and editorial criteria for that exact journal and apply them to
-the work. The general target uses Physical Review family guidance. This
-instruction also applies when you supply custom agent prompts.
+The optional `investigation_prompt` and `investigation_supervisor_prompt`
+configure the research turns. Older project configurations automatically use
+the packaged investigation prompts and keep their existing writing prompts.
+
+Set `"journal"` to a title such as `"Physical Review Letters"` to have the
+writing and review agents consult its official guidance. With an empty or
+omitted field, projects with a brief use its audience and disciplinary
+conventions. PDF-only projects retain the Physical Review family default.
+Journal instructions start at the manuscript stage.
 
 Agents are not told the current iteration or the 100-iteration safety limit.
 For compatibility with older project configurations, prompt lines containing
@@ -119,20 +150,13 @@ existing configurations. When omitted, the standard reviewer command or prompt
 is used. Add a `reviewer` command in `agent-run.json` to select a different
 agent or model for the independent review.
 
-The researcher writes the draft and the supervisor writes `feedback.md` with
-`STATUS: REVISE` or `STATUS: READY`. A `READY` decision starts a fresh external
-review. Before the reviewer starts, both old feedback files are removed; the
-reviewer prompt also forbids consulting prior reviews and agent logs. The
-reviewer writes `reviewer-feedback.md` with `STATUS: REJECT`,
-`STATUS: REVISE`, or `STATUS: ACCEPT`. Rejection and revision both return to the
-researcher, then the supervisor. The next `READY` decision starts another fresh
-review. The loop ends only when the reviewer accepts the draft, including when
-only negligible improvements remain. Each referee report remains available to
-the researcher and supervisor during the next revision cycle. The supervisor
-sees it as the reason an earlier draft was rejected or sent back. The old
-`feedback.md` is removed as soon as the researcher finishes, before the next
-supervisor round. If both reports are present when the researcher starts, the
-supervisor's instructions take priority.
+Before independent review, the runner removes both previous feedback files.
+The default referee prompt also forbids consulting prior reviews and agent
+logs. Each new referee report remains available to the researcher and
+supervisor through revision, including any reopened investigation. The runner
+removes the previous `feedback.md` before the supervisor starts. If both
+reports are present when the researcher starts, supervisor instructions take
+priority.
 
 Each command may alternatively be a shell-style string, but argument arrays
 are recommended because their quoting is unambiguous. Shell features such as
@@ -218,16 +242,17 @@ failures still stop the run immediately; after the final capacity failure the
 runner reports the error and keeps the project files for a later rerun.
 
 `agent-run` exits without changing anything unless the directory contains
-`paper.pdf` or `main.pdf` anywhere below it, or a top-level `TASK.md`. When
+`paper.pdf` or `main.pdf` anywhere below it, or a top-level task brief. When
 both PDF names exist, `paper.pdf` takes precedence regardless of depth;
 otherwise `main.pdf` is used throughout the researcher, supervisor, and reviewer
 workflow. If multiple PDFs have the preferred name, the shallowest path wins,
 with alphabetical path order breaking a tie. The relative path is included in
-both agent prompts. A project containing only `TASK.md` creates `paper.pdf` at
-the project root by default.
+the manuscript prompts. A project containing only a brief creates `paper.pdf`
+at the project root during the writing phase.
 
-After each successful researcher run, `agent-run` validates the PDF and commits
-project changes with a generic Git message. It skips the commit
+After an investigation turn, `agent-run` checks for a nonempty `research.md`.
+After a writing turn, it validates the PDF. It commits the researcher's project
+changes after either check. It skips the commit
 when there are no changes, and excludes `feedback.md`, `reviewer-feedback.md`,
 `agent-run.json`, and `.agent-run` from its commits. The former commit
 instruction is ignored when loading an older generated `agent-run.json`.

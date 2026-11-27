@@ -317,8 +317,10 @@ class ConfigurationTests(unittest.TestCase):
 
                 orchestrator.run_supervisor(5)
                 supervisor_prompt = run.call_args.args[0][-1]
-                self.assertTrue(supervisor_prompt.endswith("Review paper.pdf\n"))
-                self.assertIn(DEFAULT_JOURNAL, supervisor_prompt)
+                self.assertIn("Review paper.pdf\n", supervisor_prompt)
+                self.assertIn("Read TASK.md", supervisor_prompt)
+                self.assertIn("STATUS: RESEARCH", supervisor_prompt)
+                self.assertIn("disciplinary conventions", supervisor_prompt)
 
     def test_invalid_command_is_rejected(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -380,7 +382,7 @@ class ConfigurationTests(unittest.TestCase):
                 orchestrator.run_reviewer(3)
             command = run.call_args.args[0]
             self.assertEqual(command[:-1], ["external-referee", "--strict"])
-            self.assertIn(DEFAULT_JOURNAL, command[-1])
+            self.assertIn("Physical Review family", command[-1])
             self.assertTrue(command[-1].endswith("Read paper.pdf\n"))
 
     def test_fixed_prompt_is_appended_to_configured_command(self):

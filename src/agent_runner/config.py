@@ -10,7 +10,7 @@ from typing import Mapping, Optional, Sequence
 
 CONFIG_FILENAME = "agent-run.json"
 DEFAULT_CONFIG_FILENAME = "default-agent-run.json"
-DEFAULT_JOURNAL = "Physical Review style journal"
+DEFAULT_JOURNAL = ""
 LEGACY_RESEARCHER_COMMIT_INSTRUCTION = (
     "7. When your work for this iteration is complete, commit all "
     "paper-related changes to Git with a descriptive commit message. "
@@ -39,6 +39,8 @@ class AgentCommands:
     reviewer: Optional[tuple[str, ...]] = None
     reviewer_prompt: Optional[str] = None
     journal: str = DEFAULT_JOURNAL
+    investigation_prompt: Optional[str] = None
+    investigation_supervisor_prompt: Optional[str] = None
 
 
 def _parse_journal(value: object) -> str:
@@ -99,12 +101,17 @@ def _defaults() -> Mapping[str, object]:
     return json.loads(default_config_text())
 
 
-def _default_prompts() -> tuple[str, str, str]:
-    contents = _defaults()
+def prompt_for(commands: AgentCommands, name: str) -> str:
+    """Use the packaged prompt for callers that only configure commands."""
+    return getattr(commands, name) or _parse_prompt(name, _defaults()[name])
+
+
+def prompts_for(commands: AgentCommands) -> tuple[str, str, str]:
+    """Return the three manuscript prompts for existing programmatic callers."""
     return (
-        _parse_prompt("researcher_prompt", contents["researcher_prompt"]),
-        _parse_prompt("supervisor_prompt", contents["supervisor_prompt"]),
-        _parse_prompt("reviewer_prompt", contents["reviewer_prompt"]),
+        prompt_for(commands, "researcher_prompt"),
+        prompt_for(commands, "supervisor_prompt"),
+        prompt_for(commands, "reviewer_prompt"),
     )
 
 
@@ -135,45 +142,25 @@ def load_agent_commands(folder: Path) -> AgentCommands:
             f"{CONFIG_FILENAME} is missing: {', '.join(missing)}"
         )
 
-    (default_researcher_prompt, default_supervisor_prompt,
-     default_reviewer_prompt) = _default_prompts()
+    defaults = _defaults()
+
+    def prompt(name: str) -> str:
+        return _parse_prompt(name, contents.get(name, defaults[name]))
+
     return AgentCommands(
         researcher=_parse_command("researcher", contents["researcher"]),
         supervisor=_parse_command("supervisor", contents["supervisor"]),
-        researcher_prompt=_parse_prompt(
-            "researcher_prompt",
-            contents.get("researcher_prompt", default_researcher_prompt),
-        ).replace(LEGACY_RESEARCHER_COMMIT_INSTRUCTION, ""),
-        supervisor_prompt=_parse_prompt(
-            "supervisor_prompt",
-            contents.get("supervisor_prompt", default_supervisor_prompt),
+        researcher_prompt=prompt("researcher_prompt").replace(
+            LEGACY_RESEARCHER_COMMIT_INSTRUCTION, "",
         ),
+        supervisor_prompt=prompt("supervisor_prompt"),
+        investigation_prompt=prompt("investigation_prompt"),
+        investigation_supervisor_prompt=prompt("investigation_supervisor_prompt"),
         reviewer=_parse_command(
-            "reviewer", contents.get("reviewer", _defaults()["reviewer"]),
+            "reviewer", contents.get("reviewer", defaults["reviewer"]),
         ),
-        reviewer_prompt=_parse_prompt(
-            "reviewer_prompt",
-            contents.get("reviewer_prompt", default_reviewer_prompt),
-        ),
+        reviewer_prompt=prompt("reviewer_prompt"),
         journal=_parse_journal(contents.get("journal")),
-    )
-
-
-def prompts_for(commands: AgentCommands) -> tuple[str, str, str]:
-    """Return configured prompts, falling back for programmatic callers."""
-    if (
-        commands.researcher_prompt is not None
-        and commands.supervisor_prompt is not None
-        and commands.reviewer_prompt is not None
-    ):
-        return (commands.researcher_prompt, commands.supervisor_prompt,
-                commands.reviewer_prompt)
-
-    default_researcher, default_supervisor, default_reviewer = _default_prompts()
-    return (
-        commands.researcher_prompt or default_researcher,
-        commands.supervisor_prompt or default_supervisor,
-        commands.reviewer_prompt or default_reviewer,
     )
 
 

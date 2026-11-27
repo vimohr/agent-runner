@@ -7,6 +7,14 @@ from typing import Optional
 PDF_FILENAMES = ("paper.pdf", "main.pdf")
 
 
+def find_task(project_root: Path) -> Optional[Path]:
+    for name in ("TASK.md", "task.md"):
+        path = project_root / name
+        if path.is_file():
+            return path
+    return None
+
+
 def find_existing_pdf(project_root: Path) -> Optional[Path]:
     """Find the preferred PDF recursively within a project.
 

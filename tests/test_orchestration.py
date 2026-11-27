@@ -1,13 +1,112 @@
+import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from agent_runner import orchestrator
+from agent_runner import cli, orchestrator
+from agent_runner.checkpoint import project_checkpoint
 from agent_runner.config import AgentCommands
 
 
 class ReviewLoopTests(unittest.TestCase):
+    def test_task_to_review_through_cli_and_resume(self):
+        agent = Path(__file__).resolve().parent / "fixtures/investigation_agent.py"
+        identity = {
+            "GIT_AUTHOR_NAME": "Test", "GIT_AUTHOR_EMAIL": "test@example.com",
+            "GIT_COMMITTER_NAME": "Test", "GIT_COMMITTER_EMAIL": "test@example.com",
+        }
+        with tempfile.TemporaryDirectory() as temporary, patch.dict(os.environ, identity):
+            root = Path(temporary)
+            (root / "task.md").write_text("Compare route A and route B.")
+            with patch("builtins.input", return_value="no"):
+                self.assertEqual(cli.main([temporary]), 0)
+            config = root / "agent-run.json"
+            settings = json.loads(config.read_text())
+            settings["journal"] = "Journal of Testing"
+            for role in ("researcher", "supervisor", "reviewer"):
+                settings[role] = [sys.executable, str(agent), role]
+            config.write_text(json.dumps(settings))
+
+            self.assertEqual(cli.main([temporary]), 1)
+            self.assertFalse((root / "paper.pdf").exists())
+            state = root / ".agent-run/workflow.json"
+            self.assertEqual(json.loads(state.read_text())["step"], "write")
+            self.assertEqual(cli.main([temporary]), 0)
+            self.assertFalse(state.exists())
+            self.assertEqual((root / ".agent-run/turns").read_text().splitlines(), [
+                "investigation researcher", "investigation supervisor",
+                "investigation researcher", "investigation supervisor",
+                "interrupted writer", "paper researcher", "paper supervisor", "paper reviewer",
+            ])
+            tracked = subprocess.check_output(["git", "ls-files"], cwd=root, text=True)
+            self.assertEqual(set(tracked.splitlines()), {
+                "task.md", "research.md", "counts.csv", "paper.tex", "paper.pdf",
+            })
+            self.assertEqual((root / "reviewer-feedback.md").read_text(), "STATUS: ACCEPT\n")
+
+    def test_referee_evidence_gap_returns_to_investigation(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "TASK.md").write_text("Investigate the claim in the existing draft.")
+            pdf = root / "main.pdf"
+            pdf.write_bytes(b"%PDF-1.4\n" + b"x" * 1000)
+            commands = AgentCommands(researcher=("author",), supervisor=("supervisor",))
+            reports = iter(("WRITE", "READY", "REVISE", "RESEARCH", "WRITE", "READY", "ACCEPT"))
+            calls = []
+
+            def fake_run(command, *, label, terminal_label):
+                calls.append(label)
+                if label == "researcher (investigation)":
+                    (root / "research.md").write_text("Evidence for the claim.")
+                    if len(calls) > 1:
+                        self.assertIn("RESEARCH", (root / "feedback.md").read_text())
+                        self.assertIn("REVISE", (root / "reviewer-feedback.md").read_text())
+                elif label == "reviewer":
+                    self.assertFalse((root / "feedback.md").exists())
+                    self.assertFalse((root / "reviewer-feedback.md").exists())
+                    (root / "reviewer-feedback.md").write_text(f"STATUS: {next(reports)}")
+                elif label.startswith("supervisor"):
+                    self.assertFalse((root / "feedback.md").exists())
+                    (root / "feedback.md").write_text(f"STATUS: {next(reports)}")
+                return ""
+
+            with patch.object(orchestrator, "run", side_effect=fake_run), \
+                    patch.object(orchestrator, "commit_researcher_changes"):
+                orchestrator.main(root, commands)
+            self.assertEqual(calls, [
+                "researcher (investigation)", "supervisor (investigation)",
+                "researcher", "supervisor", "reviewer", "researcher", "supervisor",
+                "researcher (investigation)", "supervisor (investigation)",
+                "researcher", "supervisor", "reviewer",
+            ])
+
+    def test_missing_evidence_or_invalid_approval_keeps_the_pending_turn(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / "TASK.md").write_text("Study the question.")
+            commands = AgentCommands(researcher=("author",), supervisor=("supervisor",))
+            state = root / ".agent-run/workflow.json"
+            with patch.object(orchestrator, "run", return_value=""):
+                with self.assertRaisesRegex(RuntimeError, "research.md"):
+                    orchestrator.main(root, commands)
+            self.assertEqual(json.loads(state.read_text())["step"], "investigate")
+            (root / "research.md").write_text("A preliminary result.")
+
+            def stale_approval(*args, **kwargs):
+                (root / "feedback.md").write_text("STATUS: READY")
+
+            with patch.object(orchestrator, "run", side_effect=stale_approval), \
+                    patch.object(orchestrator, "commit_researcher_changes"):
+                with self.assertRaisesRegex(RuntimeError, "STATUS: WRITE"):
+                    orchestrator.main(root, commands)
+            self.assertEqual(json.loads(state.read_text())["step"], "assess")
+            with project_checkpoint(root), self.assertRaisesRegex(RuntimeError, "active"):
+                orchestrator.main(root, commands)
+
     def test_referee_revisions_return_to_researcher_and_supervisor(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)

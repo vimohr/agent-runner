@@ -37,6 +37,20 @@ STREAM_AGENT_OUTPUT = False
 DASHBOARD: Optional[RunDashboard] = None
 CAPACITY_RETRY_DELAYS = (15, 30, 60)
 
+LITERATURE_SEARCH_INSTRUCTION = (
+    "On every turn, conduct your own thorough literature search before choosing work, "
+    "drafting or revising the manuscript, or making a review decision. Search scholarly "
+    "indexes or repositories relevant to the field using the question, method, and "
+    "alternative terminology. Follow citations to foundational work and check recent "
+    "publications and relevant preprints for the current state of the art.\n"
+    "Read the closest primary sources and compare their methods, assumptions, and "
+    "results with the project's proposed contribution. Cite the sources you verified "
+    "using a DOI, stable URL, or other traceable reference. In your assigned output, "
+    "explain what was already established and what contribution, if any, remains. "
+    "If access or coverage is limited, record what you could search and qualify any "
+    "novelty claims accordingly. An unsuccessful search alone cannot establish novelty."
+)
+
 
 class ModelCapacityError(RuntimeError):
     """An agent exited because its selected model was temporarily at capacity."""
@@ -354,14 +368,15 @@ def validate_reviewer_feedback() -> str:
 
 def render_prompt(template: str, **values: object) -> str:
     """Replace the documented, deliberately explicit prompt placeholders."""
-    # Older project configs may still contain the former iteration placeholder.
-    # Drop those lines so no agent receives an iteration number.
+    # Ignore superseded lines from older generated project configs.
     prompt = "\n".join(
-        line for line in template.splitlines() if "{{iteration}}" not in line
+        line for line in template.splitlines()
+        if "{{iteration}}" not in line
+        and line.strip() != "Do a thorough literature analysis for context when appropriate."
     )
     for name, value in values.items():
         prompt = prompt.replace(f"{{{{{name}}}}}", str(value))
-    return prompt.strip() + "\n"
+    return LITERATURE_SEARCH_INSTRUCTION + "\n\n" + prompt.strip() + "\n"
 
 
 def journal_instruction(journal: str, *, paper_mode: bool = False) -> str:

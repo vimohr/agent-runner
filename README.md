@@ -53,6 +53,13 @@ python3 -m pip install -e .
 
 `--paper` is shorthand for `--paper=true`. Both workflows finish with independent review.
 
+On every turn, the runner instructs the researcher, supervisor, and independent
+reviewer to conduct a thorough literature search. This applies to both modes,
+including revisions, resumed turns, and projects with custom prompts. Each agent
+compares the question, methods, and results with the closest primary sources,
+cites what it verified in its assigned output, and identifies what the project
+adds. Agents report limits on access or coverage and qualify novelty claims.
+
 For example, a project can start with a single `TASK.md` containing:
 
 > Does the median give a more stable estimate of delivery time than the mean

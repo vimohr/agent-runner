@@ -5,6 +5,7 @@ import sys
 
 
 role, prompt = sys.argv[1:]
+assert "On every turn, conduct your own thorough literature search" in prompt
 log = Path(".agent-run/turns")
 history = log.read_text().splitlines() if log.exists() else []
 feedback = Path("feedback.md")

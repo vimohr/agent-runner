@@ -122,7 +122,10 @@ class ReviewLoopTests(unittest.TestCase):
                 researcher=("author",), supervisor=("supervisor",),
                 reviewer=("referee",),
                 journal="Physical Review Letters",
-                researcher_prompt="Write {{pdf_path}}.",
+                researcher_prompt=(
+                    "Write {{pdf_path}}.\n"
+                    "Do a thorough literature analysis for context when appropriate."
+                ),
                 supervisor_prompt="Review {{pdf_path}}.",
             )
             supervisor_decisions = iter(("REVISE", "READY", "READY", "READY"))
@@ -138,6 +141,8 @@ class ReviewLoopTests(unittest.TestCase):
                     "IMPORTANT — Target journal: Physical Review Letters."
                 ))
                 self.assertIn("Before starting, consult", prompt)
+                self.assertIn("conduct your own thorough literature search", prompt)
+                self.assertNotIn("literature analysis for context when appropriate", prompt)
                 if role == "supervisor":
                     self.assertNotIn("STATUS: RESEARCH", prompt)
                     self.assertFalse((root / "feedback.md").exists())

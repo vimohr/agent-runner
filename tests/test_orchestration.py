@@ -49,6 +49,7 @@ class ReviewLoopTests(unittest.TestCase):
             self.assertEqual(request.get_method(), "PATCH")
             self.assertEqual(request.get_header("Authorization"), "Bearer test-gist-token")
             snapshot = json.loads(request.data)["files"]["status.json"]["content"]
+            self.assertEqual(json.loads(snapshot)["project_name"], root.name)
             self.assertEqual(json.loads(snapshot)["events"][-1]["status"], "Accepted")
             self.assertNotIn("test-gist-token", snapshot)
             self.assertFalse(state.exists())
@@ -189,7 +190,9 @@ class ReviewLoopTests(unittest.TestCase):
 
     def test_gist_contains_only_progress_and_heartbeat_is_throttled(self):
         with tempfile.TemporaryDirectory() as temporary:
-            folder = Path(temporary)
+            project = Path(temporary) / "Study A & B"
+            folder = project / ".agent-run"
+            folder.mkdir(parents=True)
             dashboard = RunDashboard(folder, "paper", "abc123")
             with patch.dict(os.environ, {"AGENT_RUN_GIST_TOKEN": ""}), \
                     patch("agent_runner.dashboard.subprocess.run") as gh:
@@ -200,7 +203,9 @@ class ReviewLoopTests(unittest.TestCase):
                 self.assertIn("gists/abc123", command)
                 payload = json.loads(gh.call_args.kwargs["input"])
                 snapshot = json.loads(payload["files"]["status.json"]["content"])
-                self.assertEqual(set(snapshot), {"mode", "events", "updated"})
+                self.assertEqual(set(snapshot), {"project_name", "mode", "events", "updated"})
+                self.assertEqual(snapshot["project_name"], project.name)
+                self.assertNotIn(str(project.parent), payload["files"]["status.json"]["content"])
                 event, = snapshot["events"]
                 self.assertEqual(set(event), {"phase", "agent", "round", "time", "status"})
                 self.assertEqual(event["agent"], "Researcher")

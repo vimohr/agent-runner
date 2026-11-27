@@ -47,6 +47,7 @@ def publish_gist(gist: str, snapshot: str) -> None:
 class RunDashboard:
     def __init__(self, directory: Path, mode: str, gist: Optional[str]):
         self.path = directory / "dashboard.html"
+        self.project_name = directory.absolute().parent.name
         self.mode = mode
         self.gist = gist
         self.events: list[dict] = []
@@ -69,9 +70,10 @@ class RunDashboard:
 
     def write(self, *, publish: bool) -> None:
         snapshot = json.dumps({
+            "project_name": self.project_name,
             "mode": self.mode, "events": self.events[-20:],
             "updated": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        })
+        }).replace("<", r"\u003c")
         try:
             temp = self.path.with_suffix(".tmp.html")
             temp.write_text(

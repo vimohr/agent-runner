@@ -238,6 +238,9 @@ can leave the last recorded state on screen, so check its timestamp.
    `?gist=GIST_ID`. The browser reads the feed every two minutes. The runner
    updates it at turn boundaries and about every five minutes during long turns.
 
+The full dashboard and the compact widget identify each project by its folder
+name. The runner includes the folder's basename in each status update.
+
 The shared feed contains mode, phase, role, round, status, and timestamps.
 Anyone with the Gist link can read those fields. A failed Gist update prints
 a warning and the local dashboard continues recording the run.

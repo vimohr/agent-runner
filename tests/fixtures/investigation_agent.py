@@ -17,7 +17,7 @@ investigating = "You are the RESEARCHER investigating" in prompt or (
     "You are the SUPERVISOR assessing the investigation" in prompt
 )
 if role != "reviewer":
-    assert "Read task.md" in prompt
+    assert any(f"Read {name}" in prompt and Path(name).is_file() for name in ("task.md", "TASK.md"))
 if investigating:
     assert not pdf.exists()
     assert "Target journal" not in prompt

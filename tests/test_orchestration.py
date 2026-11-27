@@ -40,7 +40,17 @@ class ReviewLoopTests(unittest.TestCase):
             self.assertIn('"status": "Stopped"', stopped)
             self.assertEqual(cli.main([temporary, "--paper"]), 1)
             self.assertEqual((root / ".agent-run/dashboard.html").read_text(), stopped)
-            self.assertEqual(cli.main([temporary]), 0)
+            with patch.dict(os.environ, {"AGENT_RUN_GIST_TOKEN": "test-gist-token"}), \
+                    patch.object(cli.shutil, "which", return_value=None), \
+                    patch("agent_runner.dashboard.urlopen") as send:
+                self.assertEqual(cli.main([temporary, "--status-gist", "abc123"]), 0)
+            request = send.call_args.args[0]
+            self.assertEqual(request.full_url, "https://api.github.com/gists/abc123")
+            self.assertEqual(request.get_method(), "PATCH")
+            self.assertEqual(request.get_header("Authorization"), "Bearer test-gist-token")
+            snapshot = json.loads(request.data)["files"]["status.json"]["content"]
+            self.assertEqual(json.loads(snapshot)["events"][-1]["status"], "Accepted")
+            self.assertNotIn("test-gist-token", snapshot)
             self.assertFalse(state.exists())
             self.assertIn('"status": "Accepted"', (root / ".agent-run/dashboard.html").read_text())
             self.assertEqual((root / ".agent-run/turns").read_text().splitlines(), [
@@ -181,7 +191,8 @@ class ReviewLoopTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
             dashboard = RunDashboard(folder, "paper", "abc123")
-            with patch("agent_runner.dashboard.subprocess.run") as gh:
+            with patch.dict(os.environ, {"AGENT_RUN_GIST_TOKEN": ""}), \
+                    patch("agent_runner.dashboard.subprocess.run") as gh:
                 dashboard.update("write", 4, "Running")
                 dashboard.heartbeat()
                 self.assertEqual(gh.call_count, 1)

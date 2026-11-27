@@ -22,6 +22,7 @@ from .config import (
     load_agent_commands,
     setup_message,
 )
+from .dashboard import GIST_TOKEN_ENV
 from .documents import find_existing_pdf, find_task
 
 
@@ -229,7 +230,7 @@ def build_parser() -> argparse.ArgumentParser:
                        help="investigate the task brief before drafting (default)")
     parser.set_defaults(paper=False)
     parser.add_argument("--status-gist", metavar="ID",
-                        help="publish progress metadata to this GitHub Gist using gh")
+                        help=f"publish progress metadata using {GIST_TOKEN_ENV} or gh")
     parser.add_argument(
         "--email", type=email_address, metavar="ADDRESS",
         help="email ADDRESS when the loop ends in acceptance or stops with an error",
@@ -301,8 +302,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if args.status_gist:
         if not re.fullmatch(r"[0-9a-fA-F]{5,64}", args.status_gist):
             parser.error("--status-gist requires a hexadecimal GitHub Gist ID")
-        if not shutil.which("gh"):
-            parser.error("--status-gist requires the GitHub CLI (gh)")
+        if not os.environ.get(GIST_TOKEN_ENV) and not shutil.which("gh"):
+            parser.error(f"--status-gist needs {GIST_TOKEN_ENV} or an authenticated GitHub CLI (gh)")
 
     try:
         config_path, created = ensure_agent_config(folder)

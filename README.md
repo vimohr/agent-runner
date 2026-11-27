@@ -215,13 +215,26 @@ can leave the last recorded state on screen, so check its timestamp.
    GitHub Pages repository, for example as `agent-monitor/index.html` on your
    personal site. Publish that file once. GitHub Pages supports free hosting
    from public repositories. [GitHub Pages setup](https://docs.github.com/en/pages/getting-started-with-github-pages/creating-a-github-pages-site)
-2. Create a dedicated GitHub Gist for the run with a file named `status.json`
-   containing `{}`. Use a separate Gist for each concurrent job. On the runner
-   machine, authenticate the GitHub CLI with permission to update that Gist
-   (for example, `gh auth login --scopes gist`).
-3. Start the runner with `agent-run . --status-gist GIST_ID`, adding `--paper`
+2. In your browser, [create a Gist](https://gist.github.com/) with a file named
+   `status.json` containing `{}`. Copy the ID at the end of its URL. Use a
+   separate Gist for each concurrent job.
+3. On a cluster without `gh`, create a fine-grained personal access token for
+   the Gist's owner with **Account permissions → Gists → Read and write**.
+   Provide it to the runner job as `AGENT_RUN_GIST_TOKEN` through your job's
+   secret environment. For an interactive Bash session, enter it at a hidden
+   prompt with the commands below. The runner updates the Gist over HTTPS
+   using Python's standard library. If you already use an authenticated
+   GitHub CLI, the runner can use `gh` when the token variable is unset.
+   [GitHub Gist permissions](https://docs.github.com/en/rest/gists/gists#update-a-gist)
+
+   ```bash
+   read -rsp 'GitHub Gist token: ' AGENT_RUN_GIST_TOKEN
+   echo
+   export AGENT_RUN_GIST_TOKEN
+   ```
+4. Start the runner with `agent-run . --status-gist GIST_ID`, adding `--paper`
    or `--email=you@example.com` as desired. Supply the same ID when resuming.
-4. Open the hosted dashboard and enter the Gist ID, or bookmark the page with
+5. Open the hosted dashboard and enter the Gist ID, or bookmark the page with
    `?gist=GIST_ID`. The browser reads the feed every two minutes. The runner
    updates it at turn boundaries and about every five minutes during long turns.
 

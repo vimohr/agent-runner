@@ -1,10 +1,12 @@
 """Local subprocess stand-in for the research-to-paper CLI integration test."""
 
 from pathlib import Path
+import os
 import sys
 
 
 role, prompt = sys.argv[1:]
+assert "AGENT_RUN_GIST_TOKEN" not in os.environ
 assert "On every turn, conduct your own thorough literature search" in prompt
 log = Path(".agent-run/turns")
 history = log.read_text().splitlines() if log.exists() else []

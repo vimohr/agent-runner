@@ -19,7 +19,7 @@ from .config import (
     AgentCommands, DEFAULT_JOURNAL, prompt_for, reviewer_command_for,
 )
 from .documents import find_existing_pdf, find_task
-from .dashboard import RunDashboard
+from .dashboard import GIST_TOKEN_ENV, RunDashboard
 
 
 ROOT = Path.cwd()
@@ -113,6 +113,7 @@ def run(
     process = subprocess.Popen(
         cmd,
         cwd=working_directory,
+        env={key: value for key, value in os.environ.items() if key != GIST_TOKEN_ENV},
         text=True,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,

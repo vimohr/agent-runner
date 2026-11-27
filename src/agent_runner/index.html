@@ -30,6 +30,28 @@ input { border:1px solid #82959c; width:min(100%,25rem) }
 label { display:block; margin-bottom:.5rem }
 button { background:#173c46; border:1px solid #173c46; color:white; cursor:pointer }
 [hidden] { display:none !important }
+.widget-view body { background:#173c46; color:white }
+.widget-view header, .widget-view main > h1, .widget-view #source,
+.widget-view #monitor > section:not(.hero), .widget-view #mode { display:none }
+.widget-view main { margin:0; padding:0; display:flex; flex-direction:column }
+.widget-view #notice { order:1; margin:.5rem .75rem; color:#d2e2e3 }
+.widget-view #notice:empty { display:none }
+.widget-view .hero { margin:0; padding:.6rem .75rem; display:grid; grid-template-columns:minmax(0,1fr) auto;
+  grid-template-areas:"updated updated" "phase status" "agent round"; align-items:center; gap:.35rem .5rem }
+.widget-view .hero-top, .widget-view dl { display:contents }
+.widget-view dl > div:last-child { grid-area:updated }
+.widget-view dl > div:first-child { grid-area:agent }
+.widget-view dl > div:nth-child(2) { grid-area:round }
+.widget-view .hero h2 { grid-area:phase; font-size:1.05rem; margin:0; letter-spacing:-.02em }
+.widget-view #status { grid-area:status; justify-self:end; text-align:center; font-size:.8rem; padding:.1rem .4rem }
+.widget-view #updated { font-size:1.1rem; font-variant-numeric:tabular-nums }
+.widget-view dt, .widget-view dd { margin:0; font-size:.8rem }
+.widget-view #overdue-note { grid-column:1/-1; margin:0; font-size:.8rem }
+.widget-view #full-dashboard { align-self:flex-start; margin:0 .75rem .5rem; color:#d7ffeb; font-size:.8rem }
+@media (max-width:220px) {
+  .widget-view .hero { grid-template-columns:1fr; grid-template-areas:"updated" "status" "phase" "agent" "round" }
+  .widget-view #status { justify-self:start }
+}
 </style>
 </head>
 <body>
@@ -54,6 +76,7 @@ button { background:#173c46; border:1px solid #173c46; color:white; cursor:point
 <div class="scroll"><table><thead><tr><th>Time</th><th>Phase</th><th>Agent</th><th>Round</th><th>Status</th></tr></thead>
 <tbody id="events"></tbody></table></div>
 </section></div>
+<a id="full-dashboard" hidden>Open full dashboard</a>
 <noscript>Enable JavaScript to display run progress.</noscript>
 </main>
 <script type="application/json" id="snapshot">null</script>
@@ -62,6 +85,13 @@ button { background:#173c46; border:1px solid #173c46; color:white; cursor:point
 const el = id => document.getElementById(id);
 const local = JSON.parse(el("snapshot").textContent);
 const gist = new URLSearchParams(location.search).get("gist");
+const pageURL = new URL(location.href);
+const widgetView = pageURL.searchParams.get("view") === "widget" && /^[a-f\d]{5,64}$/i.test(gist || "");
+if (widgetView) {
+  document.documentElement.classList.add("widget-view");
+  pageURL.searchParams.delete("view");
+  el("full-dashboard").href = pageURL.href;
+}
 function render(data) {
   if (!Array.isArray(data.events) || !data.events.length) throw Error("No turns recorded yet.");
   const latest = data.events[data.events.length - 1];
@@ -77,6 +107,7 @@ function render(data) {
   });
   el("events").replaceChildren(...rows);
   el("monitor").hidden = false;
+  el("full-dashboard").hidden = !widgetView;
 }
 async function refresh() {
   try {
@@ -85,7 +116,7 @@ async function refresh() {
     const file = (await response.json()).files["status.json"];
     if (!file) throw Error("This Gist has no status.json yet.");
     render(JSON.parse(file.content));
-    el("notice").textContent = "Checking GitHub every two minutes.";
+    el("notice").textContent = widgetView ? "" : "Checking GitHub every two minutes.";
   } catch (error) {
     el("notice").textContent = "Could not refresh run status. " + error.message + " Retrying in two minutes.";
   } finally {

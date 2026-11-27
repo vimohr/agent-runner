@@ -13,17 +13,17 @@ manuscript, starting from a brief or an existing `paper.pdf` or `main.pdf`.
 
 ## Install from GitHub
 
-Install the research-workflow branch with
+Install the default branch with
 [pipx](https://pipx.pypa.io/) (recommended for command-line applications):
 
 ```sh
-pipx install git+https://github.com/vimohr/agent-runner.git@general-research-workflow
+pipx install git+https://github.com/vimohr/agent-runner.git
 ```
 
 Or with `uv`:
 
 ```sh
-uv tool install git+https://github.com/vimohr/agent-runner.git@general-research-workflow
+uv tool install git+https://github.com/vimohr/agent-runner.git
 ```
 
 To upgrade later:
@@ -35,7 +35,7 @@ pipx upgrade agent-runner
 You can also use regular pip:
 
 ```sh
-python3 -m pip install git+https://github.com/vimohr/agent-runner.git@general-research-workflow
+python3 -m pip install git+https://github.com/vimohr/agent-runner.git
 ```
 
 For local development, clone the repository and run:

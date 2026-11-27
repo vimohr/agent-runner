@@ -11,6 +11,13 @@ from agent_runner import cli
 
 
 class AgentRunTests(unittest.TestCase):
+    def test_paper_flag_forms(self):
+        parser = cli.build_parser()
+        for args in ([".", "--paper"], ["--paper", "."], [".", "--paper=true"]):
+            self.assertTrue(parser.parse_args(args).paper)
+        for args in (["."], [".", "--paper=false"]):
+            self.assertFalse(parser.parse_args(args).paper)
+
     @staticmethod
     def write_config(folder):
         (folder / "agent-run.json").write_text(json.dumps({
@@ -69,7 +76,7 @@ class AgentRunTests(unittest.TestCase):
                     cli.main([str(folder), "--email=reader@example.com"]), 0,
                 )
                 run.assert_called_once()
-                send.assert_called_once_with("reader@example.com", folder.resolve())
+                send.assert_called_once_with("reader@example.com", folder.resolve(), "research")
 
     def test_failure_email_is_sent_when_loop_fails(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -87,7 +94,7 @@ class AgentRunTests(unittest.TestCase):
                 )
                 complete.assert_not_called()
                 failed.assert_called_once_with(
-                    "reader@example.com", folder.resolve(), "failed",
+                    "reader@example.com", folder.resolve(), "failed", "research",
                 )
 
     def test_interruption_sends_failure_email(self):
@@ -104,7 +111,7 @@ class AgentRunTests(unittest.TestCase):
                     cli.main([str(folder), "--email=reader@example.com"]), 130,
                 )
             failed.assert_called_once_with(
-                "reader@example.com", folder.resolve(), "interrupted by user",
+                "reader@example.com", folder.resolve(), "interrupted by user", "research",
             )
 
     def test_failure_email_error_does_not_hide_runner_error(self):
@@ -152,7 +159,7 @@ class AgentRunTests(unittest.TestCase):
                 )
             message = message_from_bytes(run.call_args.kwargs["input"])
             body = message.get_payload(decode=True).decode()
-            self.assertEqual(message["Subject"], f"agent-run stopped: {folder.name}")
+            self.assertEqual(message["Subject"], f"agent-run paper stopped: {folder.name}")
             self.assertIn("researcher model at capacity", body)
             self.assertIn(str(folder / ".agent-run" / "agent-run.log"), body)
 
@@ -184,7 +191,7 @@ class AgentRunTests(unittest.TestCase):
 
             self.assertEqual(
                 run.call_args.args[0],
-                ["/usr/bin/mail", "-s", f"agent-run completed: {folder.name}",
+                ["/usr/bin/mail", "-s", f"agent-run paper completed: {folder.name}",
                  "reader@example.com"],
             )
             self.assertIn(
@@ -244,7 +251,10 @@ class AgentRunTests(unittest.TestCase):
             self.write_config(folder)
             with patch.object(cli, "switch_to_agent_branch") as switch, \
                     patch.object(cli.orchestrator, "main") as run:
-                self.assertEqual(cli.main([str(folder)]), 0)
+                with self.assertRaises(SystemExit):
+                    cli.main([str(folder)])
+                self.assertEqual(cli.main([str(folder), "--paper=true"]), 0)
+                self.assertTrue(run.call_args.kwargs["paper_mode"])
                 switch.assert_called_once_with(folder.resolve())
                 run.assert_called_once()
 

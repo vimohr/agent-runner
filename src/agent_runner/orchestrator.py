@@ -19,6 +19,7 @@ from .config import (
     AgentCommands, DEFAULT_JOURNAL, prompt_for, reviewer_command_for,
 )
 from .documents import find_existing_pdf, find_task
+from .dashboard import RunDashboard
 
 
 ROOT = Path.cwd()
@@ -33,6 +34,7 @@ COMMANDS: Optional[AgentCommands] = None
 AGENT_TIMEOUT_SECONDS: Optional[float] = None
 HEARTBEAT_SECONDS = 30.0
 STREAM_AGENT_OUTPUT = False
+DASHBOARD: Optional[RunDashboard] = None
 CAPACITY_RETRY_DELAYS = (15, 30, 60)
 
 
@@ -181,6 +183,8 @@ def run(
                     print(f"[{terminal_label}] {detail}", file=sys.stderr, flush=True)
                     log.write(f"[{label}] {detail}\n")
                     next_heartbeat = now + HEARTBEAT_SECONDS
+                    if DASHBOARD is not None:
+                        DASHBOARD.heartbeat()
 
                 try:
                     stream_name, line = output.get(timeout=0.25)
@@ -360,10 +364,10 @@ def render_prompt(template: str, **values: object) -> str:
     return prompt.strip() + "\n"
 
 
-def journal_instruction(journal: str) -> str:
+def journal_instruction(journal: str, *, paper_mode: bool = False) -> str:
     if journal == DEFAULT_JOURNAL:
         task = find_task(ROOT)
-        if task:
+        if task and not paper_mode:
             return (
                 f"Use the project brief in {task.name} to determine the paper's "
                 "audience and disciplinary conventions. If it names a target journal, "
@@ -386,14 +390,15 @@ def journal_instruction(journal: str) -> str:
     )
 
 
-def project_prompt(template: str, *, investigating: bool, **instructions: str) -> str:
+def project_prompt(template: str, *, investigating: bool, paper_mode: bool,
+                   **instructions: str) -> str:
     task = find_task(ROOT)
     if investigating and task is None:
         raise RuntimeError("Restore TASK.md or task.md to resume the investigation.")
     instructions["task_instruction"] = (
         f"Read {task.name} and use it as the project brief." if task else ""
     )
-    if not investigating and task and (ROOT / "research.md").is_file():
+    if not paper_mode and not investigating and task and (ROOT / "research.md").is_file():
         instructions["task_instruction"] += (
             " Use research.md and its supporting evidence to write or assess the paper."
         )
@@ -408,7 +413,7 @@ def project_prompt(template: str, *, investigating: bool, **instructions: str) -
     )
 
 
-def run_researcher(iteration: int, *, investigating: bool = False) -> str:
+def run_researcher(iteration: int, *, investigating: bool = False, paper_mode: bool = False) -> str:
     feedback_instruction = (
         "Read feedback.md and reviewer-feedback.md when present. "
         "Supervisor feedback takes priority if the two conflict."
@@ -432,12 +437,12 @@ that apply to your current phase of work."""
 
     name = "investigation_prompt" if investigating else "researcher_prompt"
     prompt = project_prompt(
-        prompt_for(COMMANDS, name), investigating=investigating,
+        prompt_for(COMMANDS, name), investigating=investigating, paper_mode=paper_mode,
         feedback_instruction=feedback_instruction,
     )
     label = "researcher (investigation)" if investigating else "researcher"
     if not investigating:
-        prompt = journal_instruction(COMMANDS.journal) + prompt
+        prompt = journal_instruction(COMMANDS.journal, paper_mode=paper_mode) + prompt
 
     return run_with_capacity_retry(
         [*COMMANDS.researcher, prompt],
@@ -445,7 +450,7 @@ that apply to your current phase of work."""
     )
 
 
-def run_supervisor(iteration: int, *, investigating: bool = False) -> str:
+def run_supervisor(iteration: int, *, investigating: bool = False, paper_mode: bool = False) -> str:
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
 
@@ -457,13 +462,13 @@ def run_supervisor(iteration: int, *, investigating: bool = False) -> str:
     )
     name = "investigation_supervisor_prompt" if investigating else "supervisor_prompt"
     prompt = project_prompt(
-        prompt_for(COMMANDS, name), investigating=investigating,
+        prompt_for(COMMANDS, name), investigating=investigating, paper_mode=paper_mode,
         reviewer_feedback_instruction=reviewer_instruction,
     )
     label = "supervisor (investigation)" if investigating else "supervisor"
     if not investigating:
-        prompt = journal_instruction(COMMANDS.journal) + prompt
-        if find_task(ROOT):
+        prompt = journal_instruction(COMMANDS.journal, paper_mode=paper_mode) + prompt
+        if not paper_mode and find_task(ROOT):
             prompt += (
                 "An additional decision is available for this task. If a scientific "
                 "gap requires further investigation, specify the work in feedback.md "
@@ -476,11 +481,11 @@ def run_supervisor(iteration: int, *, investigating: bool = False) -> str:
     )
 
 
-def run_reviewer(iteration: int) -> str:
+def run_reviewer(iteration: int, *, paper_mode: bool = False) -> str:
     if COMMANDS is None:
         raise RuntimeError("Agent commands have not been configured")
     reviewer_prompt = prompt_for(COMMANDS, "reviewer_prompt")
-    prompt = journal_instruction(COMMANDS.journal) + render_prompt(
+    prompt = journal_instruction(COMMANDS.journal, paper_mode=paper_mode) + render_prompt(
         reviewer_prompt, pdf_path=pdf_project_path(),
     )
     return run_with_capacity_retry(
@@ -497,7 +502,7 @@ def validate_research() -> None:
         raise RuntimeError("Researcher must record the investigation in research.md")
 
 
-def advance(step: str, iteration: int) -> str:
+def advance(step: str, iteration: int, *, paper_mode: bool) -> str:
     """Run one turn. Only a validated result advances the checkpoint."""
     if step == "investigate":
         run_researcher(iteration, investigating=True)
@@ -514,7 +519,7 @@ def advance(step: str, iteration: int) -> str:
         return "write" if decision == "WRITE" else "investigate"
 
     if step == "write":
-        run_researcher(iteration)
+        run_researcher(iteration, paper_mode=paper_mode)
         validate_pdf()
         commit_researcher_changes(iteration)
         return "supervise"
@@ -523,16 +528,16 @@ def advance(step: str, iteration: int) -> str:
     # A fresh supervisor or referee must never inherit its own partial report.
     FEEDBACK.unlink(missing_ok=True)
     if step == "supervise":
-        run_supervisor(iteration)
+        run_supervisor(iteration, paper_mode=paper_mode)
         transitions = {"READY": "review", "REVISE": "write"}
-        if find_task(ROOT):
+        if not paper_mode:
             transitions["RESEARCH"] = "investigate"
         decision = validate_decision(FEEDBACK, "Supervisor", set(transitions))
         print(f"Manuscript supervisor: {decision}")
         return transitions[decision]
 
     REVIEWER_FEEDBACK.unlink(missing_ok=True)
-    run_reviewer(iteration)
+    run_reviewer(iteration, paper_mode=paper_mode)
     decision = validate_reviewer_feedback()
     print(f"Independent reviewer: {decision}")
     return "accepted" if decision == "ACCEPT" else "write"
@@ -545,9 +550,11 @@ def main(
     timeout_seconds: Optional[float] = None,
     heartbeat_seconds: float = 30.0,
     verbose_output: bool = False,
+    paper_mode: bool = False,
+    status_gist: Optional[str] = None,
 ) -> None:
     global ROOT, PAPER, FEEDBACK, REVIEWER_FEEDBACK, COMMANDS
-    global AGENT_TIMEOUT_SECONDS, HEARTBEAT_SECONDS, STREAM_AGENT_OUTPUT
+    global AGENT_TIMEOUT_SECONDS, HEARTBEAT_SECONDS, STREAM_AGENT_OUTPUT, DASHBOARD
 
     ROOT = Path(project_root).resolve()
     FEEDBACK = ROOT / "feedback.md"
@@ -558,28 +565,43 @@ def main(
     STREAM_AGENT_OUTPUT = verbose_output
 
     with project_checkpoint(ROOT) as checkpoint:
-        saved = load_checkpoint(checkpoint)
+        mode = "paper" if paper_mode else "research"
+        task = find_task(ROOT)
+        saved = load_checkpoint(checkpoint, mode, "research" if task else "paper")
+        if not task and not paper_mode:
+            raise RuntimeError("Research mode needs TASK.md or task.md. Use --paper for a manuscript-only run.")
         if saved is None:
-            step = "investigate" if find_task(ROOT) else "write"
+            step = "write" if paper_mode else "investigate"
             PAPER = select_pdf(ROOT)
-            save_checkpoint(checkpoint, step, PAPER.relative_to(ROOT))
+            iteration = 1
+            save_checkpoint(checkpoint, step, PAPER.relative_to(ROOT), mode, iteration)
         else:
-            step, relative_pdf = saved
+            step, relative_pdf, iteration = saved
             PAPER = ROOT / relative_pdf
             print(f"Resuming {step} for {relative_pdf}.")
 
-        iteration = 1
-        while iteration <= MAX_ITERATIONS:
-            print(f"\n=== {step} (iteration {iteration}) ===")
-            step = advance(step, iteration)
-            if step == "accepted":
-                checkpoint.unlink()
-                print("\nReviewer accepted the paper.")
-                return
-            save_checkpoint(checkpoint, step, PAPER.relative_to(ROOT))
-            if step in ("investigate", "write"):
-                iteration += 1
-
-    raise RuntimeError(
-        f"Maximum iterations ({MAX_ITERATIONS}) reached."
-    )
+        dashboard = RunDashboard(checkpoint.parent, mode, status_gist)
+        print(f"{mode.capitalize()} mode. Dashboard: {dashboard.path}")
+        last_iteration = iteration + MAX_ITERATIONS - 1
+        DASHBOARD = dashboard
+        try:
+            while iteration <= last_iteration:
+                print(f"\n=== {step} (iteration {iteration}) ===")
+                dashboard.update(step, iteration, "Running")
+                next_step = advance(step, iteration, paper_mode=paper_mode)
+                if next_step == "accepted":
+                    checkpoint.unlink()
+                    dashboard.update(step, iteration, "Accepted")
+                    print("\nReviewer accepted the paper.")
+                    return
+                if next_step in ("investigate", "write"):
+                    iteration += 1
+                step = next_step
+                save_checkpoint(checkpoint, step, PAPER.relative_to(ROOT), mode, iteration)
+            raise RuntimeError(f"Maximum iterations ({MAX_ITERATIONS}) reached.")
+        except (Exception, KeyboardInterrupt) as error:
+            status = "Interrupted" if isinstance(error, KeyboardInterrupt) else "Stopped"
+            dashboard.update(step, iteration, status)
+            raise
+        finally:
+            DASHBOARD = None

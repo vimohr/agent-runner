@@ -2,8 +2,8 @@
 
 `agent-run` runs a researcher, supervisor, and independent paper reviewer in a
 project directory. Start a new investigation by writing the question in a
-top-level `TASK.md` (or `task.md`). A project with only an existing `paper.pdf`
-or `main.pdf` starts at the manuscript stage.
+top-level `TASK.md` (or `task.md`). Use `--paper` to work directly on a
+manuscript, starting from a brief or an existing `paper.pdf` or `main.pdf`.
 
 ## Requirements
 
@@ -13,17 +13,17 @@ or `main.pdf` starts at the manuscript stage.
 
 ## Install from GitHub
 
-Once this repository is pushed to GitHub, install it with
+Install the research-workflow branch with
 [pipx](https://pipx.pypa.io/) (recommended for command-line applications):
 
 ```sh
-pipx install git+https://github.com/vimohr/agent-runner.git
+pipx install git+https://github.com/vimohr/agent-runner.git@general-research-workflow
 ```
 
 Or with `uv`:
 
 ```sh
-uv tool install git+https://github.com/vimohr/agent-runner.git
+uv tool install git+https://github.com/vimohr/agent-runner.git@general-research-workflow
 ```
 
 To upgrade later:
@@ -35,7 +35,7 @@ pipx upgrade agent-runner
 You can also use regular pip:
 
 ```sh
-python3 -m pip install git+https://github.com/vimohr/agent-runner.git
+python3 -m pip install git+https://github.com/vimohr/agent-runner.git@general-research-workflow
 ```
 
 For local development, clone the repository and run:
@@ -45,6 +45,13 @@ python3 -m pip install -e .
 ```
 
 ## Usage
+
+| Command | Starting point | First turn |
+| --- | --- | --- |
+| `agent-run .` | A task brief, optionally with a manuscript | Investigate the question |
+| `agent-run . --paper=true` | A manuscript or a task brief | Write or revise the paper |
+
+`--paper` is shorthand for `--paper=true`. Both workflows finish with independent review.
 
 For example, a project can start with a single `TASK.md` containing:
 
@@ -60,7 +67,7 @@ exist, `TASK.md` takes precedence.
 | Stage | Work and handoff | Decision |
 | --- | --- | --- |
 | Investigation | The researcher reads the brief, carries out research, and records methods, findings, limitations, and links to supporting evidence in `research.md`. The supervisor checks that evidence against the question and writes `feedback.md`. | `CONTINUE` requests specific follow-up. `WRITE` approves the evidence for drafting. A well-supported negative result can qualify. |
-| Manuscript | The researcher writes or revises the editable paper and generates the PDF. The supervisor checks the draft against the evidence. | `REVISE` returns to drafting. In a project with a brief, `RESEARCH` reopens the investigation. `READY` sends the paper for independent review. |
+| Manuscript | The researcher writes or revises the editable paper and generates the PDF. The supervisor checks the draft against the evidence. | `REVISE` returns to drafting. In research mode, `RESEARCH` reopens the investigation. `READY` sends the paper for independent review. |
 | Independent review | The referee reads the draft, can inspect the evidence, and writes `reviewer-feedback.md`. | `REVISE` and `REJECT` return to the author and supervisor. `ACCEPT` completes the run. |
 
 Each decision is the final line of the corresponding report, for example
@@ -69,7 +76,8 @@ The default commands start fresh conversations. The brief, research record,
 artifacts, draft, and current feedback carry context across turns.
 
 After an interruption, rerun the same command. The runner saves the pending
-turn and selected PDF path in `.agent-run/workflow.json`. An interrupted turn
+mode, round, pending turn and selected PDF path in `.agent-run/workflow.json`.
+Resume with the same mode. An interrupted turn
 runs again and can use any work already on disk. Acceptance clears the
 checkpoint, so a later invocation starts a new run.
 
@@ -135,8 +143,8 @@ the packaged investigation prompts and keep their existing writing prompts.
 
 Set `"journal"` to a title such as `"Physical Review Letters"` to have the
 writing and review agents consult its official guidance. With an empty or
-omitted field, projects with a brief use its audience and disciplinary
-conventions. PDF-only projects retain the Physical Review family default.
+omitted field, research mode uses the brief's audience and disciplinary
+conventions. Paper mode retains the Physical Review family default.
 Journal instructions start at the manuscript stage.
 
 Agents are not told the current iteration or the 100-iteration safety limit.
@@ -186,6 +194,36 @@ To change the heartbeat interval or put a time limit on each individual agent:
 agent-run --heartbeat 10 --timeout 3600 path/to/project
 ```
 
+## Progress dashboard
+
+Open `.agent-run/dashboard.html` in your browser during a run. This standalone
+file reloads every 15 seconds. It shows the mode, phase, agent, round, last
+update, and the last 20 events from the current invocation. Long-running turns
+refresh the last-update timestamp on each runner heartbeat. A hard shutdown
+can leave the last recorded state on screen, so check its timestamp.
+
+### Monitor a remote run on GitHub Pages
+
+1. Copy `src/agent_runner/index.html` to the publishing folder of your chosen
+   GitHub Pages repository, for example as `agent-monitor/index.html` on your
+   personal site. Publish that file once. GitHub Pages supports free hosting
+   from public repositories. [GitHub Pages setup](https://docs.github.com/en/pages/getting-started-with-github-pages/creating-a-github-pages-site)
+2. Create a dedicated GitHub Gist for the run with a file named `status.json`
+   containing `{}`. Use a separate Gist for each concurrent job. On the runner
+   machine, authenticate the GitHub CLI with permission to update that Gist
+   (for example, `gh auth login --scopes gist`).
+3. Start the runner with `agent-run . --status-gist GIST_ID`, adding `--paper`
+   or `--email=you@example.com` as desired. Supply the same ID when resuming.
+4. Open the hosted dashboard and enter the Gist ID, or bookmark the page with
+   `?gist=GIST_ID`. The browser reads the feed every two minutes. The runner
+   updates it at turn boundaries and about every five minutes during long turns.
+
+The shared feed contains mode, phase, role, round, status, and timestamps.
+Anyone with the Gist link can read those fields. A failed Gist update prints
+a warning and the local dashboard continues recording the run.
+
+## Email notifications
+
 To receive an email when the external reviewer accepts the paper or the running
 loop stops with an error:
 
@@ -193,7 +231,8 @@ loop stops with an error:
 agent-run . --email="you@example.com"
 ```
 
-Success and failure emails have distinct subjects. A failure email includes
+Each subject identifies research or paper mode and whether the job completed
+or stopped. The email includes the local dashboard path. A failure email includes
 the error, project path, PDF path, and agent log path. Interrupting the loop
 with Ctrl-C also sends a failure email. The runner checks mail delivery before
 starting the loop; it cannot notify if the process or host is forcibly killed

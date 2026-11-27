@@ -1,0 +1,111 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Run monitor · Agent Runner</title>
+<style>
+:root { color-scheme:light; font-family:"Inter",system-ui,sans-serif; color:#192e38; background:#f3f6f7 }
+* { box-sizing:border-box }
+body { margin:0 }
+header { background:#122f3b; color:white; padding:1.1rem max(5vw,calc((100vw - 64rem)/2)); font-size:1.1rem; font-weight:650; letter-spacing:-.02em }
+main { max-width:66rem; margin:3rem auto; padding:0 1rem }
+h1 { font-size:clamp(2.1rem,5vw,3.3rem); letter-spacing:-.06em; margin:0 0 1.5rem }
+h2 { font-size:1.3rem; letter-spacing:-.03em; margin:0 0 1.1rem }
+section, form { background:white; border:1px solid #cdd8db; border-radius:.8rem; padding:clamp(1rem,3vw,2rem); margin:1rem 0 }
+.hero { background:#173c46; color:white; border:0 }
+.hero h2 { margin:.35rem 0 1.6rem; font-size:clamp(1.75rem,4vw,2.7rem) }
+.tag { display:inline-block; border:1px solid #98bbb8; border-radius:2rem; padding:.25rem .7rem; color:#d7ffeb; font-weight:600 }
+.hero-top { display:flex; justify-content:space-between; gap:1rem; align-items:center }
+dl { border-top:1px solid #52767b; padding-top:1.25rem; display:flex; flex-wrap:wrap; gap:1.2rem 3.2rem; margin:0 }
+dt, th, .muted, label { font-size:.9rem; font-weight:500 }
+dt { color:#bdd5d6 }
+dd { margin:.25rem 0 0; font-weight:600 }
+table { width:100%; border-collapse:collapse; font-size:.95rem }
+th, td { padding:.7rem .65rem .7rem 0; text-align:left; border-bottom:1px solid #dee6e8 }
+th,.muted { color:#465e69 }
+.scroll { overflow-x:auto }
+input, button { font:inherit; border-radius:.35rem; padding:.65rem .9rem }
+input { border:1px solid #82959c; width:min(100%,25rem) }
+label { display:block; margin-bottom:.5rem }
+button { background:#173c46; border:1px solid #173c46; color:white; cursor:pointer }
+[hidden] { display:none !important }
+</style>
+</head>
+<body>
+<header>Agent Runner</header>
+<main>
+<h1>Run monitor</h1>
+<form id="source" method="get" hidden>
+<label for="gist">Status Gist ID</label>
+<input id="gist" name="gist" placeholder="GitHub Gist ID" pattern="[a-fA-F0-9]{5,64}" required>
+<button>Open run</button>
+</form>
+<p class="muted" id="notice" role="status"></p>
+<div id="monitor" hidden>
+<section class="hero">
+<div class="hero-top"><span id="mode"></span><span class="tag" id="status"></span></div>
+<h2 id="phase"></h2>
+<dl><div><dt id="role-label">Current agent</dt><dd id="agent"></dd></div>
+<div><dt>Round</dt><dd id="round"></dd></div>
+<div><dt>Last update</dt><dd id="updated"></dd></div></dl>
+</section>
+<section><h2>Recent activity</h2>
+<div class="scroll"><table><thead><tr><th>Time</th><th>Phase</th><th>Agent</th><th>Round</th><th>Status</th></tr></thead>
+<tbody id="events"></tbody></table></div>
+</section></div>
+<noscript>Enable JavaScript to display run progress.</noscript>
+</main>
+<script type="application/json" id="snapshot">null</script>
+<script>
+"use strict";
+const el = id => document.getElementById(id);
+const local = JSON.parse(el("snapshot").textContent);
+const gist = new URLSearchParams(location.search).get("gist");
+function render(data) {
+  if (!Array.isArray(data.events) || !data.events.length) throw Error("No turns recorded yet.");
+  const latest = data.events[data.events.length - 1];
+  el("mode").textContent = data.mode === "paper" ? "Paper mode" : "Research mode";
+  for (const key of ["phase", "agent", "round", "status"]) el(key).textContent = latest[key];
+  el("role-label").textContent = latest.status === "Running" ? "Current agent" : "Last agent";
+  el("updated").textContent = new Date(data.updated).toLocaleString();
+  const rows = data.events.slice(-20).reverse().map(event => {
+    const row = document.createElement("tr");
+    const values = [new Date(event.time).toLocaleTimeString(), event.phase, event.agent, event.round, event.status];
+    for (const value of values) row.insertCell().textContent = value;
+    return row;
+  });
+  el("events").replaceChildren(...rows);
+  el("monitor").hidden = false;
+}
+async function refresh() {
+  try {
+    const response = await fetch("https://api.github.com/gists/" + gist, {cache:"no-store"});
+    if (!response.ok) throw Error("GitHub returned HTTP " + response.status + ".");
+    const file = (await response.json()).files["status.json"];
+    if (!file) throw Error("This Gist has no status.json yet.");
+    render(JSON.parse(file.content));
+    el("notice").textContent = "Checking GitHub every two minutes.";
+  } catch (error) {
+    el("notice").textContent = "Could not refresh run status. " + error.message + " Retrying in two minutes.";
+  } finally {
+    setTimeout(refresh, 120000);
+  }
+}
+if (gist || !local) {
+  el("source").hidden = false;
+  el("gist").value = gist || "";
+  if (gist && /^[a-f\d]{5,64}$/i.test(gist)) {
+    el("notice").textContent = "Loading run status…";
+    refresh();
+  } else {
+    el("notice").textContent = "Enter the Gist ID used with agent-run --status-gist.";
+  }
+} else {
+  render(local);
+  el("notice").textContent = "Local dashboard · reloads every 15 seconds.";
+  setTimeout(() => location.reload(), 15000);
+}
+</script>
+</body>
+</html>

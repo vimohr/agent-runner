@@ -6,6 +6,7 @@ from email.utils import parseaddr
 import math
 import os
 from pathlib import Path
+import re
 import shutil
 import smtplib
 import socket
@@ -100,28 +101,32 @@ def check_email_delivery() -> None:
         local_mail_transport()
 
 
-def send_completion_email(recipient: str, folder: Path) -> None:
+def send_completion_email(recipient: str, folder: Path, mode: str = "paper") -> None:
+    research = "The supervisor approved the investigation for writing.\n" if mode == "research" else ""
     send_notification_email(
         recipient,
-        subject=f"agent-run completed: {folder.name}",
+        subject=f"agent-run {mode} completed: {folder.name}",
         body=(
+            f"{research}"
             "The supervisor marked the paper READY and the external reviewer accepted it.\n\n"
             f"Project: {folder}\n"
             f"PDF: {orchestrator.select_pdf(folder)}\n"
+            f"Dashboard: {folder / '.agent-run' / 'dashboard.html'}\n"
         ),
     )
 
 
-def send_failure_email(recipient: str, folder: Path, reason: str) -> None:
+def send_failure_email(recipient: str, folder: Path, reason: str, mode: str = "paper") -> None:
     send_notification_email(
         recipient,
-        subject=f"agent-run stopped: {folder.name}",
+        subject=f"agent-run {mode} stopped: {folder.name}",
         body=(
-            "The paper loop stopped before reviewer acceptance.\n\n"
+            f"The {mode} workflow stopped before reviewer acceptance.\n\n"
             f"Reason: {reason}\n"
             f"Project: {folder}\n"
             f"PDF: {orchestrator.select_pdf(folder)}\n"
             f"Log: {folder / '.agent-run' / 'agent-run.log'}\n"
+            f"Dashboard: {folder / '.agent-run' / 'dashboard.html'}\n"
         ),
     )
 
@@ -217,6 +222,14 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run the agent orchestrator for a marked project folder.",
     )
     parser.add_argument("folder", type=Path)
+    modes = parser.add_mutually_exclusive_group()
+    modes.add_argument("--paper", "--paper=true", action="store_true",
+                       help="start with the manuscript and skip the investigation")
+    modes.add_argument("--paper=false", dest="paper", action="store_false",
+                       help="investigate the task brief before drafting (default)")
+    parser.set_defaults(paper=False)
+    parser.add_argument("--status-gist", metavar="ID",
+                        help="publish progress metadata to this GitHub Gist using gh")
     parser.add_argument(
         "--email", type=email_address, metavar="ADDRESS",
         help="email ADDRESS when the loop ends in acceptance or stops with an error",
@@ -272,8 +285,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not folder.is_dir():
         parser.error(f"not a directory: {folder}")
 
-    if find_task(folder) is None and find_existing_pdf(folder) is None:
-        return 0
+    if find_task(folder) is None:
+        if find_existing_pdf(folder) is None:
+            return 0
+        if not args.paper:
+            parser.error("research mode needs TASK.md or task.md. For a manuscript use --paper")
+
+    mode = "paper" if args.paper else "research"
+    if args.status_gist:
+        if not re.fullmatch(r"[0-9a-fA-F]{5,64}", args.status_gist):
+            parser.error("--status-gist requires a hexadecimal GitHub Gist ID")
+        if not shutil.which("gh"):
+            parser.error("--status-gist requires the GitHub CLI (gh)")
 
     try:
         config_path, created = ensure_agent_config(folder)
@@ -295,6 +318,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 timeout_seconds=args.timeout,
                 heartbeat_seconds=args.heartbeat,
                 verbose_output=args.verbose,
+                paper_mode=args.paper,
+                status_gist=args.status_gist,
             )
         except (Exception, KeyboardInterrupt) as error:
             if args.email:
@@ -303,7 +328,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     else str(error).strip() or type(error).__name__
                 )
                 try:
-                    send_failure_email(args.email, folder, reason)
+                    send_failure_email(args.email, folder, reason, mode)
                     print(f"Failure email sent to {args.email}.")
                 except Exception as notification_error:
                     print(
@@ -312,7 +337,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                     )
             raise
         if args.email:
-            send_completion_email(args.email, folder)
+            send_completion_email(args.email, folder, mode)
             print(f"Completion email sent to {args.email}.")
     except ConfigurationError as error:
         print(setup_message(folder, error), file=sys.stderr)

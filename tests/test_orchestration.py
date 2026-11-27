@@ -10,6 +10,7 @@ from unittest.mock import patch
 from agent_runner import cli, orchestrator
 from agent_runner.checkpoint import project_checkpoint
 from agent_runner.config import AgentCommands
+from agent_runner.dashboard import RunDashboard
 
 
 class ReviewLoopTests(unittest.TestCase):
@@ -35,8 +36,13 @@ class ReviewLoopTests(unittest.TestCase):
             self.assertFalse((root / "paper.pdf").exists())
             state = root / ".agent-run/workflow.json"
             self.assertEqual(json.loads(state.read_text())["step"], "write")
+            stopped = (root / ".agent-run/dashboard.html").read_text()
+            self.assertIn('"status": "Stopped"', stopped)
+            self.assertEqual(cli.main([temporary, "--paper"]), 1)
+            self.assertEqual((root / ".agent-run/dashboard.html").read_text(), stopped)
             self.assertEqual(cli.main([temporary]), 0)
             self.assertFalse(state.exists())
+            self.assertIn('"status": "Accepted"', (root / ".agent-run/dashboard.html").read_text())
             self.assertEqual((root / ".agent-run/turns").read_text().splitlines(), [
                 "investigation researcher", "investigation supervisor",
                 "investigation researcher", "investigation supervisor",
@@ -110,6 +116,7 @@ class ReviewLoopTests(unittest.TestCase):
     def test_referee_revisions_return_to_researcher_and_supervisor(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
+            (root / "TASK.md").write_text("Polish the manuscript")
             (root / "paper.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 1000)
             commands = AgentCommands(
                 researcher=("author",), supervisor=("supervisor",),
@@ -132,6 +139,7 @@ class ReviewLoopTests(unittest.TestCase):
                 ))
                 self.assertIn("Before starting, consult", prompt)
                 if role == "supervisor":
+                    self.assertNotIn("STATUS: RESEARCH", prompt)
                     self.assertFalse((root / "feedback.md").exists())
                     if (root / "reviewer-feedback.md").exists():
                         self.assertIn("why an earlier draft", prompt)
@@ -148,7 +156,7 @@ class ReviewLoopTests(unittest.TestCase):
 
             with patch.object(orchestrator, "run", side_effect=fake_run), \
                     patch.object(orchestrator, "commit_researcher_changes"):
-                orchestrator.main(root, commands)
+                orchestrator.main(root, commands, paper_mode=True)
 
             self.assertEqual(
                 [role for role, _ in calls],
@@ -163,6 +171,27 @@ class ReviewLoopTests(unittest.TestCase):
                 (root / "reviewer-feedback.md").read_text().splitlines()[-1],
                 "STATUS: ACCEPT",
             )
+
+    def test_gist_contains_only_progress_and_heartbeat_is_throttled(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            folder = Path(temporary)
+            dashboard = RunDashboard(folder, "paper", "abc123")
+            with patch("agent_runner.dashboard.subprocess.run") as gh:
+                dashboard.update("write", 4, "Running")
+                dashboard.heartbeat()
+                self.assertEqual(gh.call_count, 1)
+                command = gh.call_args.args[0]
+                self.assertIn("gists/abc123", command)
+                payload = json.loads(gh.call_args.kwargs["input"])
+                snapshot = json.loads(payload["files"]["status.json"]["content"])
+                self.assertEqual(set(snapshot), {"mode", "events", "updated"})
+                event, = snapshot["events"]
+                self.assertEqual(set(event), {"phase", "agent", "round", "time", "status"})
+                self.assertEqual(event["agent"], "Researcher")
+                self.assertEqual(snapshot["mode"], "paper")
+                gh.side_effect = subprocess.TimeoutExpired(command, 10)
+                dashboard.update("review", 5, "Accepted")
+            self.assertIn('"status": "Accepted"', dashboard.path.read_text())
 
     def test_researcher_reads_both_reports_with_supervisor_priority(self):
         with tempfile.TemporaryDirectory() as temporary:

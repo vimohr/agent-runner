@@ -286,10 +286,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         parser.error(f"not a directory: {folder}")
 
     if find_task(folder) is None:
-        if find_existing_pdf(folder) is None:
-            return 0
         if not args.paper:
-            parser.error("research mode needs TASK.md or task.md. For a manuscript use --paper")
+            parser.error(
+                f"Create TASK.md (or task.md) in {folder} with your research question to start. "
+                "To work on an existing manuscript, use --paper."
+            )
+        if find_existing_pdf(folder) is None:
+            parser.error(
+                f"To start paper mode, create TASK.md (or task.md) in {folder} "
+                "or provide paper.pdf or main.pdf in the project."
+            )
 
     mode = "paper" if args.paper else "research"
     if args.status_gist:

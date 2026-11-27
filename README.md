@@ -280,8 +280,9 @@ Partial supervisor or reviewer reports are removed before a retry. Other
 failures still stop the run immediately; after the final capacity failure the
 runner reports the error and keeps the project files for a later rerun.
 
-`agent-run` exits without changing anything unless the directory contains
-`paper.pdf` or `main.pdf` anywhere below it, or a top-level task brief. When
+`agent-run` reports a startup error if the project root has no `TASK.md` or
+`task.md`. In paper mode, a project can also start from an existing
+`paper.pdf` or `main.pdf` anywhere in its directory tree. When
 both PDF names exist, `paper.pdf` takes precedence regardless of depth;
 otherwise `main.pdf` is used throughout the researcher, supervisor, and reviewer
 workflow. If multiple PDFs have the preferred name, the shallowest path wins,

@@ -25,13 +25,18 @@ class AgentRunTests(unittest.TestCase):
             "supervisor": ["review-agent", "--model", "reviewer-model"],
         }))
 
-    def test_folder_without_marker_is_unchanged(self):
+    def test_empty_folder_reports_required_input_before_setup(self):
         with tempfile.TemporaryDirectory() as temporary:
             folder = Path(temporary)
-            with patch.object(cli, "switch_to_agent_branch") as switch:
-                self.assertEqual(cli.main([str(folder)]), 0)
-                switch.assert_not_called()
-            self.assertFalse((folder / ".git").exists())
+            for flags, hint in (([], "research question"), (["--paper"], "paper.pdf or main.pdf")):
+                with self.subTest(flags=flags), patch("sys.stderr", new_callable=io.StringIO) as stderr:
+                    with self.assertRaises(SystemExit) as error:
+                        cli.main([str(folder), *flags])
+                    self.assertEqual(error.exception.code, 2)
+                    self.assertIn("TASK.md (or task.md)", stderr.getvalue())
+                    self.assertIn(str(folder), stderr.getvalue())
+                    self.assertIn(hint, stderr.getvalue())
+                    self.assertEqual(list(folder.iterdir()), [])
 
     def test_task_starts_orchestrator(self):
         with tempfile.TemporaryDirectory() as temporary:
